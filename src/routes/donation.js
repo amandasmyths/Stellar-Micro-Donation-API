@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
+const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 
 const stellarService = new StellarService({
   network: process.env.STELLAR_NETWORK || 'testnet',
@@ -87,11 +88,17 @@ router.post('/', (req, res) => {
       });
     }
 
+    // Calculate analytics fee (not deducted on-chain)
+    const donationAmount = parseFloat(amount);
+    const feeCalculation = calculateAnalyticsFee(donationAmount);
+
     const transaction = Transaction.create({
-      amount: parseFloat(amount),
+      amount: donationAmount,
       donor: donor || 'Anonymous',
       recipient,
-      idempotencyKey
+      idempotencyKey,
+      analyticsFee: feeCalculation.fee,
+      analyticsFeePercentage: feeCalculation.feePercentage
     });
 
     res.status(201).json({
