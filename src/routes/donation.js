@@ -1,12 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const StellarService = require('../services/StellarService');
+const Database = require('../utils/database');
 const Transaction = require('./models/transaction');
+const getStellarService = require('../config/stellar').getStellarService;
+const encryption = require('../utils/encryption');
 
-const stellarService = new StellarService({
-  network: process.env.STELLAR_NETWORK || 'testnet',
-  horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org'
-});
+const stellarService = getStellarService();
 
 /**
  * POST /api/v1/donation/verify
@@ -44,6 +43,95 @@ router.post('/verify', async (req, res) => {
 });
 
 /**
+ * POST /donations/send
+ * Send XLM from one wallet to another and record it
+ */
+router.post('/send', async (req, res) => {
+  try {
+    const { senderId, receiverId, amount, memo } = req.body;
+
+    // 1. Validation
+    if (!senderId || !receiverId || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: senderId, receiverId, amount'
+      });
+    }
+
+    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Amount must be a positive number'
+      });
+    }
+
+    // 2. Database Lookup
+    const sender = await Database.get('SELECT * FROM users WHERE id = ?', [senderId]);
+    const receiver = await Database.get('SELECT * FROM users WHERE id = ?', [receiverId]);
+
+    if (!sender || !receiver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Sender or receiver not found'
+      });
+    }
+
+    if (!sender.encryptedSecret) {
+      return res.status(400).json({
+        success: false,
+        error: 'Sender has no secret key configured'
+      });
+    }
+
+    // 3. Stellar Transaction using custodial secret
+    const secret = encryption.decrypt(sender.encryptedSecret);
+
+    const stellarResult = await stellarService.sendDonation({
+      sourceSecret: secret,
+      destinationPublic: receiver.publicKey,
+      amount: amount,
+      memo: memo
+    });
+
+    // 4. Record in SQLite
+    const dbResult = await Database.run(
+      'INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+      [senderId, receiverId, amount, memo]
+    );
+
+    // 5. Record in JSON for stats backward compatibility
+    Transaction.create({
+      id: dbResult.id.toString(),
+      amount: parseFloat(amount),
+      donor: sender.publicKey,
+      recipient: receiver.publicKey,
+      stellarTxId: stellarResult.transactionId,
+      status: 'completed'
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: dbResult.id,
+        stellarTxId: stellarResult.transactionId,
+        ledger: stellarResult.ledger,
+        amount: amount,
+        sender: sender.publicKey,
+        receiver: receiver.publicKey,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Send donation error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send donation',
+      message: error.message
+    });
+  }
+});
+
+/**
  * POST /donations
  * Create a new donation
  */
@@ -52,7 +140,7 @@ router.post('/', (req, res) => {
 
     const idempotencyKey = req.headers['idempotency-key'];
 
-     if (!idempotencyKey) {
+    if (!idempotencyKey) {
       return res.status(400).json({
         success: false,
         error: {
@@ -141,7 +229,7 @@ router.get('/recent', (req, res) => {
     }
 
     const transactions = Transaction.getAll();
-    
+
     // Sort by timestamp descending (most recent first)
     const sortedTransactions = transactions
       .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
@@ -178,7 +266,7 @@ router.get('/recent', (req, res) => {
 router.get('/:id', (req, res) => {
   try {
     const transaction = Transaction.getById(req.params.id);
-    
+
     if (!transaction) {
       return res.status(404).json({
         error: 'Donation not found'

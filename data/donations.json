@@ -124,5 +124,45 @@
     "timestamp": "2024-02-22T11:15:00.000Z",
     "status": "completed",
     "stellarTxId": "tx_014"
+  },
+  {
+    "id": "6",
+    "amount": 10.5,
+    "donor": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU",
+    "recipient": "GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD",
+    "timestamp": "2026-02-20T14:15:55.199Z",
+    "status": "completed",
+    "stellarTxId": "mock_fba50fb5c3a8c177c6676a6c5cd7e96e",
+    "idempotencyKey": null
+  },
+  {
+    "id": "7",
+    "amount": 10.5,
+    "donor": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU",
+    "recipient": "GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD",
+    "timestamp": "2026-02-20T16:14:04.015Z",
+    "status": "completed",
+    "stellarTxId": "mock_714bd09c29f3f2bdc4c9c002f9c40fb8",
+    "idempotencyKey": null
+  },
+  {
+    "id": "4",
+    "amount": 10.5,
+    "donor": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU",
+    "recipient": "GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD",
+    "timestamp": "2026-02-20T17:03:48.711Z",
+    "status": "completed",
+    "stellarTxId": "mock_552616920040729ade893df71476b01a",
+    "idempotencyKey": null
+  },
+  {
+    "id": "5",
+    "amount": 10.5,
+    "donor": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU",
+    "recipient": "GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD",
+    "timestamp": "2026-02-20T17:15:25.786Z",
+    "status": "completed",
+    "stellarTxId": "mock_e3e6b95f1adc5bf85e3d4df5ca2c0012",
+    "idempotencyKey": null
   }
 ]
