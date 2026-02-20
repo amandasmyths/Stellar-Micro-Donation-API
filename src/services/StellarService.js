@@ -3,6 +3,8 @@
  * Handles actual blockchain interactions with Stellar network
  */
 
+const StellarErrorHandler = require('../utils/stellarErrorHandler');
+
 class StellarService {
   constructor(config = {}) {
     this.network = config.network || 'testnet';

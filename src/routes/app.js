@@ -5,6 +5,7 @@ const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
+const errorHandler = require('../middleware/errorHandler');
 
 const app = express();
 
@@ -41,13 +42,15 @@ app.use((req, res) => {
   });
 });
 
-// Error handler
-// eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: err.message
+// Global error handler
+app.use(errorHandler);
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[UnhandledRejection]', {
+    reason,
+    promise,
+    timestamp: new Date().toISOString()
   });
 });
 
