@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
-const Wallet = require('./models/wallet');
+const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 
 const stellarService = new StellarService({
   network: process.env.STELLAR_NETWORK || 'testnet',
@@ -42,11 +42,6 @@ router.post('/verify', async (req, res) => {
       }
     });
   }
-});
-
-const stellarService = new StellarService({
-  network: process.env.STELLAR_NETWORK || 'testnet',
-  horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org'
 });
 
 /**
