@@ -2,8 +2,12 @@ const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');
 const Transaction = require('./models/transaction');
-const getStellarService = require('../config/stellar').getStellarService;
-const encryption = require('../utils/encryption');
+const requireApiKey = require('../middleware/apiKeyMiddleware');
+
+const stellarService = new StellarService({
+  network: process.env.STELLAR_NETWORK || 'testnet',
+  horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org'
+});
 const donationValidator = require('../utils/donationValidator');
 const memoValidator = require('../utils/memoValidator');
 const { calculateAnalyticsFee } = require('../utils/feeCalculator');
@@ -14,7 +18,7 @@ const stellarService = getStellarService();
  * POST /api/v1/donation/verify
  * Verify a donation transaction by hash
  */
-router.post('/verify', async (req, res) => {
+router.post('/verify', requireApiKey, async (req, res) => {
   try {
     const { transactionHash } = req.body;
 
@@ -49,6 +53,7 @@ router.post('/verify', async (req, res) => {
     });
   }
 });
+
 
 /**
  * POST /donations/send
@@ -143,7 +148,7 @@ router.post('/send', async (req, res) => {
  * POST /donations
  * Create a new donation
  */
-router.post('/', (req, res) => {
+router.post('/', requireApiKey, (req, res) => {
   try {
 
     const idempotencyKey = req.headers['idempotency-key'];

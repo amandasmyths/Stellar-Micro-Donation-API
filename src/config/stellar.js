@@ -4,8 +4,7 @@
  * Supports easy network switching via STELLAR_NETWORK environment variable
  */
 
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 
 const StellarService = require('../services/StellarService');
 const MockStellarService = require('../services/MockStellarService');
