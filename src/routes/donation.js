@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const Database = require('../utils/database');
 const Transaction = require('./models/transaction');
 const requireApiKey = require('../middleware/apiKeyMiddleware');
 
@@ -10,10 +11,8 @@ const stellarService = new StellarService({
 const donationValidator = require('../utils/donationValidator');
 const memoValidator = require('../utils/memoValidator');
 const { calculateAnalyticsFee } = require('../utils/feeCalculator');
-const MockStellarService = require('../services/MockStellarService');
 
-// Initialize Stellar service (using Mock for now)
-const stellarService = new MockStellarService();
+const stellarService = getStellarService();
 
 /**
  * POST /api/v1/donation/verify
@@ -55,6 +54,95 @@ router.post('/verify', requireApiKey, async (req, res) => {
   }
 });
 
+
+/**
+ * POST /donations/send
+ * Send XLM from one wallet to another and record it
+ */
+router.post('/send', async (req, res) => {
+  try {
+    const { senderId, receiverId, amount, memo } = req.body;
+
+    // 1. Validation
+    if (!senderId || !receiverId || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: senderId, receiverId, amount'
+      });
+    }
+
+    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Amount must be a positive number'
+      });
+    }
+
+    // 2. Database Lookup
+    const sender = await Database.get('SELECT * FROM users WHERE id = ?', [senderId]);
+    const receiver = await Database.get('SELECT * FROM users WHERE id = ?', [receiverId]);
+
+    if (!sender || !receiver) {
+      return res.status(404).json({
+        success: false,
+        error: 'Sender or receiver not found'
+      });
+    }
+
+    if (!sender.encryptedSecret) {
+      return res.status(400).json({
+        success: false,
+        error: 'Sender has no secret key configured'
+      });
+    }
+
+    // 3. Stellar Transaction using custodial secret
+    const secret = encryption.decrypt(sender.encryptedSecret);
+
+    const stellarResult = await stellarService.sendDonation({
+      sourceSecret: secret,
+      destinationPublic: receiver.publicKey,
+      amount: amount,
+      memo: memo
+    });
+
+    // 4. Record in SQLite
+    const dbResult = await Database.run(
+      'INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+      [senderId, receiverId, amount, memo]
+    );
+
+    // 5. Record in JSON for stats backward compatibility
+    Transaction.create({
+      id: dbResult.id.toString(),
+      amount: parseFloat(amount),
+      donor: sender.publicKey,
+      recipient: receiver.publicKey,
+      stellarTxId: stellarResult.transactionId,
+      status: 'completed'
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: dbResult.id,
+        stellarTxId: stellarResult.transactionId,
+        ledger: stellarResult.ledger,
+        amount: amount,
+        sender: sender.publicKey,
+        receiver: receiver.publicKey,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Send donation error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send donation',
+      message: error.message
+    });
+  }
+});
 
 /**
  * POST /donations
@@ -128,7 +216,7 @@ router.post('/', requireApiKey, (req, res) => {
     if (donor && donor !== 'Anonymous') {
       const dailyTotal = Transaction.getDailyTotalByDonor(donor);
       const dailyValidation = donationValidator.validateDailyLimit(parsedAmount, dailyTotal);
-      
+
       if (!dailyValidation.valid) {
         return res.status(400).json({
           success: false,

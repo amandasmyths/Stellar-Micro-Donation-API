@@ -6,6 +6,7 @@ const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 const logger = require('../middleware/logger');
+const errorHandler = require('../middleware/errorHandler');
 
 const app = express();
 
@@ -56,7 +57,7 @@ app.listen(PORT, () => {
   console.log(`Stellar Micro-Donation API running on port ${PORT}`);
   console.log(`Network: ${config.network}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
-  
+
   // Start the recurring donation scheduler
   recurringDonationScheduler.start();
 });
