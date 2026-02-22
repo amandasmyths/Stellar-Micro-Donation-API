@@ -209,13 +209,24 @@ Stellar-Micro-Donation-API/
 
 ### Environment Variables
 
-Create a `.env` file in the `src/` directory:
+Create a `.env` file in the project root:
 
 ```env
 STELLAR_NETWORK=testnet
 HORIZON_URL=https://horizon-testnet.stellar.org
 PORT=3000
+API_KEYS=your-api-key-here
 ```
+
+Required at startup:
+- `API_KEYS` (must include at least one comma-separated key)
+- `ENCRYPTION_KEY` (required only when `NODE_ENV=production`)
+
+Validated at startup (if provided):
+- `PORT` must be an integer from 1 to 65535
+- `STELLAR_NETWORK` must be one of `testnet`, `mainnet`, `futurenet`
+- `MOCK_STELLAR` must be `true` or `false`
+- `HORIZON_URL` must be a valid URL
 
 ## 🧪 Testing
 
