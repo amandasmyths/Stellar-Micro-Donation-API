@@ -21,6 +21,8 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - **Analytics**: Get donation statistics and summaries
 - **Mock Mode**: Development mode with simulated Stellar operations
 - **Automated Scheduler**: Background service for executing recurring donations
+- **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
+- **Idempotency**: Prevent duplicate transactions with idempotency key support
 
 ## 🏗️ Architecture
 

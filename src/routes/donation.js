@@ -8,6 +8,7 @@ const { checkPermission } = require('../middleware/rbacMiddleware');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const encryption = require('../utils/encryption');
+const { donationRateLimiter, verificationRateLimiter } = require('../middleware/rateLimiter');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -17,10 +18,11 @@ const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const stellarService = getStellarService();
 
 /**
- * POST /donations
- * Create a new donation
+ * POST /donations/verify
+ * Verify a donation transaction by hash
+ * Rate limited: 30 requests per minute per IP
  */
-router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req, res) => {
+router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req, res) => {
   try {
     const { transactionHash } = req.body;
 
@@ -55,8 +57,9 @@ router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req
  * POST /donations/send
  * Send XLM from one wallet to another and record it
  * Requires idempotency key to prevent duplicate transactions
+ * Rate limited: 10 requests per minute per IP
  */
-router.post('/send', requireIdempotency, async (req, res) => {
+router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
 
@@ -157,7 +160,7 @@ router.post('/send', requireIdempotency, async (req, res) => {
  * POST /donations/verify
  * Verify a donation transaction by hash
  */
-router.post('/', requireApiKey, requireIdempotency, async (req, res, next) => {
+router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (req, res, next) => {
   try {
 
     const { amount, donor, recipient, memo } = req.body;
