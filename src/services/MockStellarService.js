@@ -5,6 +5,7 @@
  */
 
 const crypto = require('crypto');
+const { NotFoundError, ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 
 class MockStellarService {
   constructor() {
@@ -57,7 +58,7 @@ class MockStellarService {
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
-      throw new Error(`Wallet not found: ${publicKey}`);
+      throw new NotFoundError(`Wallet not found: ${publicKey}`, ERROR_CODES.WALLET_NOT_FOUND);
     }
 
     return {
@@ -75,7 +76,7 @@ class MockStellarService {
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
-      throw new Error(`Wallet not found: ${publicKey}`);
+      throw new NotFoundError(`Wallet not found: ${publicKey}`, ERROR_CODES.WALLET_NOT_FOUND);
     }
 
     // Simulate Friendbot funding with 10000 XLM
@@ -140,22 +141,23 @@ class MockStellarService {
       }
 
       if (!sourceWallet) {
-        throw new Error('Invalid source secret key');
+        throw new ValidationError('Invalid source secret key');
       }
 
       if (sourceWallet.publicKey === destinationPublic) {
-        throw new Error('Sender and recipient wallets must be different');
+        throw new ValidationError('Sender and recipient wallets must be different');
       }
 
       const destWallet = this.wallets.get(destinationPublic);
       if (!destWallet) {
-        throw new Error(`Destination wallet not found: ${destinationPublic}`);
+        throw new NotFoundError(`Destination wallet not found: ${destinationPublic}`, ERROR_CODES.WALLET_NOT_FOUND);
       }
 
       // Check if destination account is funded (Stellar requirement)
       const destBalance = parseFloat(destWallet.balance);
       if (destBalance === 0) {
-        throw new Error(
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
           'Destination account is not funded. On Stellar, accounts must be funded with at least 1 XLM before they can receive payments. ' +
           'Please fund the account first using the Friendbot (testnet) or send an initial funding transaction.'
         );
@@ -236,7 +238,7 @@ class MockStellarService {
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
-      throw new Error(`Wallet not found: ${publicKey}`);
+      throw new NotFoundError(`Wallet not found: ${publicKey}`, ERROR_CODES.WALLET_NOT_FOUND);
     }
 
     const transactions = this.transactions.get(publicKey) || [];
@@ -271,7 +273,7 @@ class MockStellarService {
       }
     }
 
-    throw new Error(`Transaction not found: ${transactionHash}`);
+    throw new NotFoundError(`Transaction not found: ${transactionHash}`, ERROR_CODES.TRANSACTION_NOT_FOUND);
   }
 
   /**
@@ -284,7 +286,7 @@ class MockStellarService {
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
-      throw new Error(`Wallet not found: ${publicKey}`);
+      throw new NotFoundError(`Wallet not found: ${publicKey}`, ERROR_CODES.WALLET_NOT_FOUND);
     }
 
     if (!this.streamListeners.has(publicKey)) {

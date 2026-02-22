@@ -3,9 +3,9 @@ const config = require('../config/stellar');
 const donationRoutes = require('./donation');
 const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
-const walletRoutes = require('./wallet');
 const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
+const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 
 const app = express();
 
@@ -22,7 +22,6 @@ app.use((req, res, next) => {
 app.use('/donations', donationRoutes);
 app.use('/wallets', walletRoutes);
 app.use('/stats', statsRoutes);
-app.use('/wallets', walletRoutes);
 app.use('/stream', streamRoutes);
 
 // Health check endpoint
@@ -34,23 +33,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Endpoint not found',
-    path: req.path,
-    method: req.method
-  });
-});
+// 404 handler (must be after all routes)
+app.use(notFoundHandler);
 
-// Error handler
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: err.message
-  });
-});
+// Global error handler (must be last)
+app.use(errorHandler);
 
 const PORT = config.port;
 app.listen(PORT, () => {

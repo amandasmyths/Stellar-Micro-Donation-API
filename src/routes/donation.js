@@ -3,6 +3,7 @@ const router = express.Router();
 const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
 const Wallet = require('./models/wallet');
+const { ValidationError, NotFoundError, InternalError, ERROR_CODES } = require('../utils/errors');
 
 const stellarService = new StellarService({
   network: process.env.STELLAR_NETWORK || 'testnet',
@@ -13,18 +14,12 @@ const stellarService = new StellarService({
  * POST /api/v1/donation/verify
  * Verify a donation transaction by hash
  */
-router.post('/verify', async (req, res) => {
+router.post('/verify', async (req, res, next) => {
   try {
     const { transactionHash } = req.body;
 
     if (!transactionHash) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Transaction hash is required'
-        }
-      });
+      throw new ValidationError('Transaction hash is required', null, ERROR_CODES.INVALID_REQUEST);
     }
 
     const result = await stellarService.verifyTransaction(transactionHash);
@@ -34,53 +29,7 @@ router.post('/verify', async (req, res) => {
       data: result
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'VERIFICATION_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
-
-const stellarService = new StellarService({
-  network: process.env.STELLAR_NETWORK || 'testnet',
-  horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org'
-});
-
-/**
- * POST /api/v1/donation/verify
- * Verify a donation transaction by hash
- */
-router.post('/verify', async (req, res) => {
-  try {
-    const { transactionHash } = req.body;
-
-    if (!transactionHash) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Transaction hash is required'
-        }
-      });
-    }
-
-    const result = await stellarService.verifyTransaction(transactionHash);
-
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'VERIFICATION_FAILED',
-        message: error.message
-      }
-    });
+    next(error);
   }
 });
 
@@ -88,42 +37,29 @@ router.post('/verify', async (req, res) => {
  * POST /donations
  * Create a new donation
  */
-router.post('/', (req, res) => {
+router.post('/', (req, res, next) => {
   try {
-
     const idempotencyKey = req.headers['idempotency-key'];
 
-     if (!idempotencyKey) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'IDEMPOTENCY_KEY_REQUIRED',
-          message: 'Idempotency key is required'
-        }
-      });
+    if (!idempotencyKey) {
+      throw new ValidationError('Idempotency key is required', null, ERROR_CODES.IDEMPOTENCY_KEY_REQUIRED);
     }
 
     const { amount, donor, recipient } = req.body;
 
     if (!amount || !recipient) {
-      return res.status(400).json({
-        error: 'Missing required fields: amount, recipient'
-      });
+      throw new ValidationError('Missing required fields: amount, recipient', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
 
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      return res.status(400).json({
-        error: 'Amount must be a positive number'
-      });
+      throw new ValidationError('Amount must be a positive number', null, ERROR_CODES.INVALID_AMOUNT);
     }
 
     const normalizedDonor = typeof donor === 'string' ? donor.trim() : '';
     const normalizedRecipient = typeof recipient === 'string' ? recipient.trim() : '';
 
     if (normalizedDonor && normalizedRecipient && normalizedDonor === normalizedRecipient) {
-      return res.status(400).json({
-        error: 'Sender and recipient wallets must be different'
-      });
+      throw new ValidationError('Sender and recipient wallets must be different');
     }
 
     // Calculate analytics fee (not deducted on-chain)
@@ -144,10 +80,7 @@ router.post('/', (req, res) => {
       data: transaction
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to create donation',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -155,7 +88,7 @@ router.post('/', (req, res) => {
  * GET /donations
  * Get all donations
  */
-router.get('/', (req, res) => {
+router.get('/', (req, res, next) => {
   try {
     const transactions = Transaction.getAll();
     res.json({
@@ -164,10 +97,7 @@ router.get('/', (req, res) => {
       count: transactions.length
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve donations',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -177,14 +107,12 @@ router.get('/', (req, res) => {
  * Query params:
  *   - limit: number of recent donations to return (default: 10, max: 100)
  */
-router.get('/recent', (req, res) => {
+router.get('/recent', (req, res, next) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 10, 100);
 
     if (isNaN(limit) || limit < 1) {
-      return res.status(400).json({
-        error: 'Invalid limit parameter. Must be a positive number.'
-      });
+      throw new ValidationError('Invalid limit parameter. Must be a positive number.', null, ERROR_CODES.INVALID_LIMIT);
     }
 
     const transactions = Transaction.getAll();
@@ -211,10 +139,7 @@ router.get('/recent', (req, res) => {
       limit: limit
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve recent donations',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -222,14 +147,12 @@ router.get('/recent', (req, res) => {
  * GET /donations/:id
  * Get a specific donation
  */
-router.get('/:id', (req, res) => {
+router.get('/:id', (req, res, next) => {
   try {
     const transaction = Transaction.getById(req.params.id);
     
     if (!transaction) {
-      return res.status(404).json({
-        error: 'Donation not found'
-      });
+      throw new NotFoundError('Donation not found', ERROR_CODES.DONATION_NOT_FOUND);
     }
 
     res.json({
@@ -237,10 +160,7 @@ router.get('/:id', (req, res) => {
       data: transaction
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve donation',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -248,22 +168,18 @@ router.get('/:id', (req, res) => {
  * PATCH /donations/:id/status
  * Update donation transaction status
  */
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status, stellarTxId, ledger } = req.body;
 
     if (!status) {
-      return res.status(400).json({
-        error: 'Missing required field: status'
-      });
+      throw new ValidationError('Missing required field: status', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
 
     const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-      });
+      throw new ValidationError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
     }
 
     const stellarData = {};
@@ -278,15 +194,7 @@ router.patch('/:id/status', async (req, res) => {
       data: updatedTransaction
     });
   } catch (error) {
-    if (error.message.includes('not found')) {
-      return res.status(404).json({
-        error: error.message
-      });
-    }
-    res.status(500).json({
-      error: 'Failed to update transaction status',
-      message: error.message
-    });
+    next(error);
   }
 });
 
