@@ -2,12 +2,14 @@ const express = require('express');
 const router = express.Router();
 const Wallet = require('./models/wallet');
 const Database = require('../utils/database');
+const { checkPermission } = require('../middleware/rbacMiddleware');
+const { PERMISSIONS } = require('../utils/permissions');
 
 /**
  * POST /wallets
  * Create a new wallet with metadata
  */
-router.post('/', (req, res) => {
+router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), (req, res) => {
   try {
     const { address, label, ownerName } = req.body;
 
@@ -42,7 +44,7 @@ router.post('/', (req, res) => {
  * GET /wallets
  * Get all wallets
  */
-router.get('/', (req, res) => {
+router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
   try {
     const wallets = Wallet.getAll();
     res.json({
@@ -62,7 +64,7 @@ router.get('/', (req, res) => {
  * GET /wallets/:id
  * Get a specific wallet
  */
-router.get('/:id', (req, res) => {
+router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
   try {
     const wallet = Wallet.getById(req.params.id);
     
@@ -88,7 +90,7 @@ router.get('/:id', (req, res) => {
  * PATCH /wallets/:id
  * Update wallet metadata
  */
-router.patch('/:id', (req, res) => {
+router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), (req, res) => {
   try {
     const { label, ownerName } = req.body;
 
@@ -126,7 +128,7 @@ router.patch('/:id', (req, res) => {
  * GET /wallets/:publicKey/transactions
  * Get all transactions (sent and received) for a wallet
  */
-router.get('/:publicKey/transactions', async (req, res) => {
+router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), async (req, res) => {
   try {
     const { publicKey } = req.params;
 

@@ -4,7 +4,12 @@
  * Supports easy network switching via STELLAR_NETWORK environment variable
  */
 
-require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+const path = require('path');
+const { validateEnvironment } = require('./envValidation');
+const log = require('../utils/log');
+
+validateEnvironment();
 
 const StellarService = require('../services/StellarService');
 const MockStellarService = require('../services/MockStellarService');
@@ -33,7 +38,7 @@ const useMockStellar = process.env.MOCK_STELLAR === 'true';
  */
 const getNetworkConfig = () => {
   const networkName = (process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
-  
+
   // If custom HORIZON_URL is provided, use it with the specified network
   if (process.env.HORIZON_URL) {
     return {
@@ -41,7 +46,7 @@ const getNetworkConfig = () => {
       horizonUrl: process.env.HORIZON_URL,
     };
   }
-  
+
   // Use preset or default to testnet
   return NETWORK_PRESETS[networkName] || NETWORK_PRESETS.testnet;
 };
@@ -52,14 +57,13 @@ const getNetworkConfig = () => {
  */
 const getStellarService = () => {
   if (useMockStellar) {
-    console.log('[Stellar Config] Using MOCK Stellar service');
+    log.info('STELLAR_CONFIG', 'Using mock Stellar service');
     return new MockStellarService();
   }
-  
   const networkConfig = getNetworkConfig();
-  console.log(`[Stellar Config] Using REAL Stellar service on ${networkConfig.network.toUpperCase()}`);
-  console.log(`[Stellar Config] Horizon URL: ${networkConfig.horizonUrl}`);
-  
+  log.info('STELLAR_CONFIG', 'Using real Stellar service', { network: networkConfig.network.toUpperCase() });
+  log.info('STELLAR_CONFIG', 'Resolved Horizon URL', { horizonUrl: networkConfig.horizonUrl });
+
   return new StellarService({
     network: networkConfig.network,
     horizonUrl: networkConfig.horizonUrl,
@@ -74,4 +78,5 @@ module.exports = {
   port: process.env.PORT || 3000,
   network: getNetworkConfig().network,
   horizonUrl: getNetworkConfig().horizonUrl,
+  dbPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
 };

@@ -2,23 +2,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../src/.env
 
 const initSqlJs = require('sql.js');
 const path = require('path');
-const fs = require('fs');
-
-// Use DB_PATH from environment or default to ./db.sqlite
-const DB_PATH = process.env.DB_PATH 
-  ? path.resolve(process.cwd(), process.env.DB_PATH)
-  : path.join(__dirname, '../../db.sqlite');
-
-// Ensure directory exists
-const dbDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-
-// Initialize SQL.js
-let db = null;
-let SQL = null;
-let initPromise = null;
+const { DatabaseError } = require('./errors');
 
 async function initDB() {
   if (initPromise) {
@@ -53,39 +37,58 @@ function saveDB() {
 }
 
 class Database {
-  static async getConnection() {
-    return initDB();
+  static getConnection() {
+    return new Promise((resolve, reject) => {
+      const db = new sqlite3.Database(DB_PATH, (err) => {
+        if (err) {
+          reject(new DatabaseError('Failed to connect to database', err));
+        } else {
+          resolve(db);
+        }
+      });
+    });
   }
 
   static async query(sql, params = []) {
-    const database = await this.getConnection();
-    const stmt = database.prepare(sql);
-    stmt.bind(params);
-    const results = [];
-    while (stmt.step()) {
-      results.push(stmt.getAsObject());
-    }
-    stmt.free();
-    return results;
+    const db = await this.getConnection();
+    return new Promise((resolve, reject) => {
+      db.all(sql, params, (err, rows) => {
+        db.close();
+        if (err) {
+          reject(new DatabaseError('Database query failed', err));
+        } else {
+          resolve(rows);
+        }
+      });
+    });
   }
 
   static async run(sql, params = []) {
-    const database = await this.getConnection();
-    database.run(sql, params);
-    saveDB();
-    return { id: database.getRowsModified(), changes: database.getRowsModified() };
+    const db = await this.getConnection();
+    return new Promise((resolve, reject) => {
+      db.run(sql, params, function(err) {
+        db.close();
+        if (err) {
+          reject(new DatabaseError('Database operation failed', err));
+        } else {
+          resolve({ id: this.lastID, changes: this.changes });
+        }
+      });
+    });
   }
 
   static async get(sql, params = []) {
-    const database = await this.getConnection();
-    const stmt = database.prepare(sql);
-    stmt.bind(params);
-    let result = null;
-    if (stmt.step()) {
-      result = stmt.getAsObject();
-    }
-    stmt.free();
-    return result;
+    const db = await this.getConnection();
+    return new Promise((resolve, reject) => {
+      db.get(sql, params, (err, row) => {
+        db.close();
+        if (err) {
+          reject(new DatabaseError('Database query failed', err));
+        } else {
+          resolve(row);
+        }
+      });
+    });
   }
 }
 
