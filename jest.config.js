@@ -20,6 +20,7 @@ module.exports = {
     'tests/validation-middleware.test.js',
     'tests/permission-integration.test.js',
     'tests/idempotency-integration.test.js',
+    'tests/idempotency.test.js',
   ],
   collectCoverageFrom: [
     'src/**/*.js',
