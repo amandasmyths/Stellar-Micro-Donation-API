@@ -107,13 +107,19 @@ npm run dev
 
 ## 📡 API Endpoints
 
+### Quick Reference
+
+For detailed request/response examples with error handling, see the **[Complete API Examples Documentation](docs/API_EXAMPLES.md)**.
+
 ### Donations
 
 - `POST /donations` - Create a new donation
 - `GET /donations` - List all donations
 - `GET /donations/recent?limit=10` - Get recent donations
 - `GET /donations/:id` - Get specific donation
+- `GET /donations/limits` - Get donation amount limits
 - `POST /donations/verify` - Verify transaction on blockchain
+- `PATCH /donations/:id/status` - Update donation status
 
 ### Wallets
 
@@ -132,8 +138,18 @@ npm run dev
 
 ### Statistics
 
-- `GET /stats/donations` - Get donation statistics
+- `GET /stats/daily` - Get daily donation statistics
+- `GET /stats/weekly` - Get weekly donation statistics
 - `GET /stats/summary` - Get summary analytics
+- `GET /stats/donors` - Get donor statistics
+- `GET /stats/recipients` - Get recipient statistics
+- `GET /stats/analytics-fees` - Get analytics fee summary
+- `GET /stats/wallet/:walletAddress/analytics` - Get wallet analytics
+
+### Transactions
+
+- `GET /transactions` - Get paginated transactions
+- `POST /transactions/sync` - Sync wallet transactions from Stellar network
 
 ### Health Check
 
@@ -250,10 +266,11 @@ node test-recurring-donations.js
 
 ## 📚 Documentation
 
+- **[API Examples](docs/API_EXAMPLES.md)** - Complete request/response examples for all endpoints
 - [Architecture Documentation](docs/ARCHITECTURE.md) - Detailed system architecture
-- [API Flow Diagram](API%20flow%20diagram.txt) - API request flow
-- [Mock Stellar Guide](MOCK_STELLAR_GUIDE.md) - Using mock Stellar service
-- [Quick Start Guide](QUICK_START.md) - Getting started quickly
+- [API Flow Diagram](docs/API_FLOW.md) - API request flow
+- [Quick Start Guide](docs/guides/QUICK_START.md) - Getting started quickly
+- [Mock Stellar Guide](docs/guides/MOCK_STELLAR_GUIDE.md) - Using mock Stellar service
 
 ## 🔧 Configuration
 
