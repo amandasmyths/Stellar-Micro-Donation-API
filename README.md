@@ -254,6 +254,7 @@ node test-recurring-donations.js
 - [API Flow Diagram](API%20flow%20diagram.txt) - API request flow
 - [Mock Stellar Guide](MOCK_STELLAR_GUIDE.md) - Using mock Stellar service
 - [Quick Start Guide](QUICK_START.md) - Getting started quickly
+- [Label-Based CI Enforcement](docs/LABEL_ENFORCEMENT.md) - Extended CI checks for test/security PRs
 
 ## 🔧 Configuration
 
