@@ -304,5 +304,48 @@
     "idempotencyKey": "test-key-admin-1771776221819",
     "analyticsFee": 0.2,
     "analyticsFeePercentage": 0.02
+  },
+  {
+    "amount": 500,
+    "donor": "TestDonor",
+    "recipient": "Recipient1",
+    "status": "confirmed",
+    "id": "1771857285960",
+    "memo": "",
+    "timestamp": "2026-02-23T14:34:45.960Z",
+    "stellarTxId": null,
+    "stellarLedger": null,
+    "statusUpdatedAt": "2026-02-23T14:34:45.960Z"
+  },
+  {
+    "amount": 300,
+    "donor": "TestDonor",
+    "recipient": "Recipient2",
+    "status": "failed",
+    "id": "1771857285960",
+    "memo": "",
+    "timestamp": "2026-02-23T14:34:45.960Z",
+    "stellarTxId": null,
+    "stellarLedger": null,
+    "statusUpdatedAt": "2026-02-23T14:34:45.960Z"
+  },
+  {
+    "id": "1771857285964",
+    "memo": "",
+    "timestamp": "2026-02-23T14:34:45.964Z",
+    "status": "pending",
+    "stellarTxId": null,
+    "stellarLedger": null,
+    "statusUpdatedAt": "2026-02-23T14:34:45.964Z"
+  },
+  {
+    "amount": 100,
+    "id": "1771857285967",
+    "memo": "",
+    "timestamp": "2026-02-23T14:34:45.967Z",
+    "status": "pending",
+    "stellarTxId": null,
+    "stellarLedger": null,
+    "statusUpdatedAt": "2026-02-23T14:34:45.967Z"
   }
 ]
