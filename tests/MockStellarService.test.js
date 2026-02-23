@@ -85,8 +85,9 @@ describe('MockStellarService', () => {
       const source = await service.createWallet();
       const destination = await service.createWallet();
 
-      // Fund source wallet
+      // Fund both wallets
       await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
 
       // Send donation
       const result = await service.sendDonation({
@@ -106,6 +107,7 @@ describe('MockStellarService', () => {
       const destination = await service.createWallet();
 
       await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
 
       await service.sendDonation({
         sourceSecret: source.secretKey,
@@ -118,12 +120,14 @@ describe('MockStellarService', () => {
       const destBalance = await service.getBalance(destination.publicKey);
 
       expect(parseFloat(sourceBalance.balance)).toBe(9899.5);
-      expect(parseFloat(destBalance.balance)).toBe(100.5);
+      expect(parseFloat(destBalance.balance)).toBe(10100.5);
     });
 
     test('should reject donation with insufficient balance', async () => {
       const source = await service.createWallet();
       const destination = await service.createWallet();
+
+      await service.fundTestnetWallet(destination.publicKey);
 
       await expect(
         service.sendDonation({
@@ -169,6 +173,7 @@ describe('MockStellarService', () => {
       const destination = await service.createWallet();
 
       await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
       await service.sendDonation({
         sourceSecret: source.secretKey,
         destinationPublic: destination.publicKey,
@@ -189,6 +194,7 @@ describe('MockStellarService', () => {
       const destination = await service.createWallet();
 
       await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
 
       // Send multiple donations
       for (let i = 0; i < 5; i++) {
@@ -207,7 +213,7 @@ describe('MockStellarService', () => {
 
     test('should throw error for non-existent wallet', async () => {
       await expect(
-        service.getTransactionHistory('GINVALID')
+        service.getTransactionHistory('GINVALIDKEY123456789012345678901234567890123456')
       ).rejects.toThrow('Wallet not found');
     });
   });
@@ -218,6 +224,7 @@ describe('MockStellarService', () => {
       const destination = await service.createWallet();
 
       await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
 
       const transactions = [];
       const unsubscribe = service.streamTransactions(
@@ -243,6 +250,7 @@ describe('MockStellarService', () => {
       const destination = await service.createWallet();
 
       await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
 
       const listener1 = jest.fn();
       const listener2 = jest.fn();
@@ -266,6 +274,7 @@ describe('MockStellarService', () => {
       const destination = await service.createWallet();
 
       await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
 
       const listener = jest.fn();
       const unsubscribe = service.streamTransactions(source.publicKey, listener);
@@ -284,7 +293,7 @@ describe('MockStellarService', () => {
 
     test('should throw error for non-existent wallet', async () => {
       expect(() => {
-        service.streamTransactions('GINVALID', () => {});
+        service.streamTransactions('GINVALIDKEY123456789012345678901234567890123456', () => {});
       }).toThrow('Wallet not found');
     });
   });
