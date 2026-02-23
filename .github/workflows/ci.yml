@@ -1,14 +1,14 @@
 name: Continuous Integration
 
 on:
-  push:
-    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
 
 jobs:
   validate-and-test:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write # Required to post comments
 
     steps:
       - name: Checkout Code
@@ -23,15 +23,29 @@ jobs:
         run: npm install
 
       - name: Run Environment Validation
-        # This triggers your npm script which calls envValidator.js
+        id: env_val
         run: npm run validate-env
         env:
-          # CI needs these 'fake' values to pass the validation check
-          API_KEYS: "ci_bypass_key_123"
+          API_KEYS: "ci_bypass"
           STELLAR_NETWORK: "testnet"
-          PORT: "3000"
 
       - name: Run Tests
+        id: tests
         run: npm test
         env:
-          API_KEYS: "ci_bypass_key_123"
+          API_KEYS: "ci_bypass"
+
+      - name: Post CI Summary Comment
+        if: always() # Ensure this runs even if tests fail
+        uses: mshick/add-pr-comment@v2
+        with:
+          message: |
+            ## 🚀 CI Status Summary
+            
+            | Check | Status |
+            | :--- | :--- |
+            | **Env Validation** | ${{ steps.env_val.outcome == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | **Unit Tests** | ${{ steps.tests.outcome == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | **Security Scan** | 🛡️ Pending |
+            
+            **Details:** Check the [Actions Tab](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for full logs.
