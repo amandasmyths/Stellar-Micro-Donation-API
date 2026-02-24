@@ -21,6 +21,7 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - **Analytics**: Get donation statistics and summaries
 - **API Key Rotation**: Zero-downtime key rotation with versioning and graceful deprecation
 - **Mock Mode**: Development mode with simulated Stellar operations
+- **Failure Simulation**: Comprehensive network failure testing for robust error handling
 - **Automated Scheduler**: Background service for executing recurring donations
 - **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
 - **Idempotency**: Prevent duplicate transactions with idempotency key support
@@ -272,15 +273,82 @@ npm run keys -- revoke --id 2
 
 ## 🧪 Testing
 
-Run tests:
+### Run Tests
+
 ```bash
 npm test
 ```
 
-Run specific test file:
+### Run Tests with Coverage
+
+```bash
+npm run test:coverage
+```
+
+This generates:
+- Terminal coverage summary
+- HTML report at `coverage/lcov-report/index.html`
+- LCOV report for CI/CD integration
+- JSON summary for programmatic access
+
+### Check Coverage Thresholds
+
+```bash
+npm run check-coverage
+```
+
+Validates that coverage meets minimum thresholds:
+- **Branches**: 30%
+- **Functions**: 30%
+- **Lines**: 30%
+- **Statements**: 30%
+
+### View Coverage Report
+
+After running coverage, open the HTML report:
+
+```bash
+# macOS
+open coverage/lcov-report/index.html
+
+# Windows
+start coverage/lcov-report/index.html
+
+# Linux
+xdg-open coverage/lcov-report/index.html
+```
+
+### Coverage Enforcement
+
+Coverage is automatically enforced in CI/CD:
+- ✅ PRs must meet minimum 30% coverage thresholds
+- ❌ Builds fail if coverage drops below thresholds
+- 📊 Coverage reports uploaded as artifacts (30-day retention)
+
+For detailed coverage documentation, see [Coverage Guide](docs/COVERAGE_GUIDE.md).
+
+### Run Specific Tests
+
 ```bash
 npm test -- tests/integration.test.js
 ```
+
+### Run Integration Tests for Donation Routes
+
+Comprehensive end-to-end tests for all donation endpoints:
+
+```bash
+npm test tests/donation-routes-integration.test.js
+```
+
+**Coverage**: 60+ test cases covering:
+- All 7 donation endpoints
+- Success and failure scenarios
+- Validation, authentication, idempotency
+- Rate limiting and error handling
+- No live Stellar network required (uses MockStellarService)
+
+For detailed information, see [Donation Routes Integration Tests](DONATION_ROUTES_INTEGRATION_TESTS.md).
 
 ### Test Recurring Donations
 
@@ -288,9 +356,31 @@ npm test -- tests/integration.test.js
 node test-recurring-donations.js
 ```
 
+### Test Failure Scenarios
+
+The project includes comprehensive failure simulation for testing network errors and retry logic:
+
+```bash
+# Run failure simulation tests
+npm test tests/stellar-network-failures.test.js
+
+# Run retry logic tests
+npm test tests/stellar-retry-logic.test.js
+```
+
+**Failure Types Tested**:
+- Timeouts and network errors
+- Service unavailability
+- Transaction failures (bad sequence, insufficient fee)
+- Rate limiting
+- Partial responses
+
+For detailed information, see [Stellar Failure Simulation Guide](docs/STELLAR_FAILURE_SIMULATION.md).
+
 ## 📚 Documentation
 
 - **[API Examples](docs/API_EXAMPLES.md)** - Complete request/response examples for all endpoints
+- **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
 - [Architecture Documentation](docs/ARCHITECTURE.md) - Detailed system architecture
 - [API Flow Diagram](docs/API_FLOW.md) - API request flow
 - [Quick Start Guide](docs/guides/QUICK_START.md) - Getting started quickly
@@ -313,12 +403,21 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Run tests locally (`npm test && npm run test:coverage`)
-4. Commit your changes (`git commit -m 'Add amazing feature'`)
-5. Push to the branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
+3. Make your changes and add tests
+4. Run tests locally (`npm test`)
+5. Check coverage (`npm run test:coverage`)
+6. Ensure coverage thresholds are met (`npm run check-coverage`)
+7. Commit your changes (`git commit -m 'Add amazing feature'`)
+8. Push to the branch (`git push origin feature/amazing-feature`)
+9. Open a Pull Request
 
-**Note:** All CI checks must pass before merge. See [Branch Protection](docs/BRANCH_PROTECTION.md) for details.
+**Note:** All CI checks must pass before merge, including:
+- ✅ All tests passing
+- ✅ Coverage thresholds met (30% minimum)
+- ✅ Linting checks passed
+- ✅ Security checks passed
+
+See [Branch Protection](docs/BRANCH_PROTECTION.md) and [Coverage Guide](docs/COVERAGE_GUIDE.md) for details.
 
 ## 📝 License
 

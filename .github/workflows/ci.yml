@@ -56,7 +56,7 @@ jobs:
         run: npm run init-db
       
       - name: Run tests with coverage
-        run: npm run test:coverage
+        run: npm run test:coverage:ci
         env:
           CI: true
           MOCK_STELLAR: true
