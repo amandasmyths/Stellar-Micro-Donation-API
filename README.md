@@ -19,6 +19,7 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - **Recurring Donations**: Schedule automated recurring donations (daily, weekly, monthly)
 - **Wallet Management**: Track wallets and query transaction history
 - **Analytics**: Get donation statistics and summaries
+- **API Key Rotation**: Zero-downtime key rotation with versioning and graceful deprecation
 - **Mock Mode**: Development mode with simulated Stellar operations
 - **Automated Scheduler**: Background service for executing recurring donations
 - **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
@@ -233,11 +234,20 @@ Create a `.env` file in the project root:
 STELLAR_NETWORK=testnet
 HORIZON_URL=https://horizon-testnet.stellar.org
 PORT=3000
+```
+
+For API key authentication, use the new database-backed system (recommended):
+```bash
+npm run keys:create -- --name "My Key" --role user --expires 365
+```
+
+Or use legacy environment-based keys (deprecated):
+```env
 API_KEYS=your-api-key-here
 ```
 
 Required at startup:
-- `API_KEYS` (must include at least one comma-separated key)
+- `API_KEYS` (legacy method, or use database-backed keys)
 - `ENCRYPTION_KEY` (required only when `NODE_ENV=production`)
 
 Validated at startup (if provided):
@@ -245,6 +255,20 @@ Validated at startup (if provided):
 - `STELLAR_NETWORK` must be one of `testnet`, `mainnet`, `futurenet`
 - `MOCK_STELLAR` must be `true` or `false`
 - `HORIZON_URL` must be a valid URL
+
+### API Key Management
+
+The API supports zero-downtime key rotation. See:
+- [API Key Rotation Guide](docs/API_KEY_ROTATION.md) - Complete documentation
+- [Quick Start Guide](docs/API_KEY_ROTATION_QUICK_START.md) - Common commands
+
+Quick commands:
+```bash
+npm run keys:create -- --name "My Key" --role user --expires 365
+npm run keys:list
+npm run keys -- deprecate --id 1
+npm run keys -- revoke --id 2
+```
 
 ## 🧪 Testing
 

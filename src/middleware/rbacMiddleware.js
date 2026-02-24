@@ -107,21 +107,26 @@ exports.requireAdmin = () => {
 };
 
 /**
- * Middleware to attach user role (mock implementation for development)
- * In production, this should extract user info from JWT or session
+ * Middleware to attach user role
+ * Uses API key info from database or falls back to legacy behavior
  * @returns {Function} Express middleware function
  */
 exports.attachUserRole = () => {
   return (req, res, next) => {
-    // Mock implementation - in production, extract from JWT/session
-    // For now, check for API key or default to guest
-    const apiKey = req.headers['x-api-key'];
-    
-    if (apiKey === 'admin-key-123') {
-      req.user = { id: 'admin-1', role: 'admin', name: 'Admin User' };
-    } else if (apiKey) {
-      req.user = { id: 'user-1', role: 'user', name: 'Regular User' };
+    // If API key middleware already attached key info, use it
+    if (req.apiKey) {
+      const role = req.apiKey.role || 'user';
+      const keyId = req.apiKey.id || 'legacy';
+      
+      req.user = {
+        id: `apikey-${keyId}`,
+        role: role,
+        name: req.apiKey.name || `API Key User (${role})`,
+        apiKeyId: req.apiKey.id,
+        isLegacy: req.apiKey.isLegacy || false
+      };
     } else {
+      // No API key, default to guest
       req.user = { id: 'guest', role: 'guest', name: 'Guest' };
     }
     

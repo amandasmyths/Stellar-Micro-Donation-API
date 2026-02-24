@@ -4,11 +4,13 @@ const donationRoutes = require('./donation');
 const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
+const apiKeysRoutes = require('./apiKeys');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbacMiddleware');
 const Database = require('../utils/database');
+const { initializeApiKeysTable } = require('../models/apiKeys');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 
@@ -28,6 +30,7 @@ app.use('/donations', donationRoutes);
 app.use('/wallets', walletRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
+app.use('/api-keys', apiKeysRoutes);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -77,13 +80,24 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const PORT = config.port;
-app.listen(PORT, () => {
-  log.info('APP', 'Stellar Micro-Donation API running', { port: PORT });
-  log.info('APP', 'Active network configured', { network: config.network });
-  log.info('APP', 'Health check endpoint ready', { url: `http://localhost:${PORT}/health` });
 
-  // Start the recurring donation scheduler
-  recurringDonationScheduler.start();
-});
+// Initialize API keys table before starting server
+(async () => {
+  try {
+    await initializeApiKeysTable();
+    log.info('APP', 'API keys table initialized');
+  } catch (error) {
+    log.error('APP', 'Failed to initialize API keys table', { error: error.message });
+  }
+
+  app.listen(PORT, () => {
+    log.info('APP', 'Stellar Micro-Donation API running', { port: PORT });
+    log.info('APP', 'Active network configured', { network: config.network });
+    log.info('APP', 'Health check endpoint ready', { url: `http://localhost:${PORT}/health` });
+
+    // Start the recurring donation scheduler
+    recurringDonationScheduler.start();
+  });
+})();
 
 module.exports = app;

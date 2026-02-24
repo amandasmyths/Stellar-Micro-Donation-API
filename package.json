@@ -15,7 +15,11 @@
     "test:rate-limit": "node test-rate-limit.js",
     "dev": "nodemon src/routes/app.js",
     "lint": "eslint .",
-    "lint:security": "eslint . --ext .js --format stylish"
+    "lint:security": "eslint . --ext .js --format stylish",
+    "keys": "node src/scripts/manageApiKeys.js",
+    "keys:create": "node src/scripts/manageApiKeys.js create",
+    "keys:list": "node src/scripts/manageApiKeys.js list",
+    "keys:help": "node src/scripts/manageApiKeys.js help"
   },
   "dependencies": {
     "dotenv": "^16.0.3",
