@@ -9,9 +9,8 @@ const path = require('path');
 const { validateEnvironment } = require('./envValidation');
 const { securityConfig } = require("./securityConfig");
 const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const config = require('./index');
 const log = require('../utils/log');
-
-validateEnvironment();
 
 const StellarService = require('../services/StellarService');
 const MockStellarService = require('../services/MockStellarService');

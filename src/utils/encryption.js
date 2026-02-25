@@ -7,6 +7,8 @@ const IV_LENGTH = 12; // Standard for GCM
 // eslint-disable-next-line no-unused-vars -- Reserved for future GCM tag validation
 const AUTH_TAG_LENGTH = 16;
 
+const config = require('../config');
+
 /**
  * Get or derive the encryption key using security configuration
  */
