@@ -19,6 +19,10 @@ const { initializeApiKeysTable } = require('../models/apiKeys');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
+const {
+  logStartupDiagnostics,
+  logShutdownDiagnostics,
+} = require("../utils/startupDiagnostics");
 
 const app = express();
 
@@ -119,47 +123,65 @@ process.on('unhandledRejection', (reason, promise) => {
   });
 });
 
-const PORT = stellarConfig.port;
+const PORT = config.server.port;
 
-// Initialize API keys table before starting server
 async function startServer() {
   try {
+    // Log startup diagnostics first
+    await logStartupDiagnostics();
+
+    // Initialize database and API keys
+    await Database.initialize();
     await initializeApiKeysTable();
-  } catch (error) {
-    log.error('APP', 'Failed to initialize API keys table', { error: error.message });
-  }
+    await validateRBAC();
 
-  // Validate RBAC configuration
-  try {
-    validateRBAC({ logWarnings: true, throwOnError: false });
-  } catch (error) {
-    log.error('APP', 'RBAC validation failed', { error: error.message });
-  }
+    const server = app.listen(PORT, async () => {
+      // Start background services
+      recurringDonationScheduler.start();
+      reconciliationService.start();
 
-  app.listen(PORT, () => {
-    log.info('APP', 'API started', { 
-      port: PORT, 
-      network: stellarConfig.network,
-      healthCheck: `http://localhost:${PORT}/health`
-    });
-    
-    if (log.isDebugMode) {
-      log.debug('APP', 'Debug mode enabled - verbose logging active');
-      log.debug('APP', 'Configuration loaded', {
+      // Final startup confirmation
+      log.info("APP", "🌟 Server ready and accepting connections", {
         port: PORT,
         network: stellarConfig.network,
-        horizonUrl: stellarConfig.horizonUrl,
-        mockStellar: config.stellar.mockEnabled,
-        nodeEnv: config.server.env
+        healthCheck: `http://localhost:${PORT}/health`,
+        environment: config.server.env,
       });
-    }
+    });
 
-    // Start the recurring donation scheduler
-    recurringDonationScheduler.start();
-    
-    // Start the transaction reconciliation service
-    reconciliationService.start();
-  });
+    // Graceful shutdown handling
+    const gracefulShutdown = async (signal) => {
+      logShutdownDiagnostics(signal);
+
+      server.close(() => {
+        log.info("SHUTDOWN", "HTTP server closed");
+
+        // Stop background services
+        recurringDonationScheduler.stop();
+        reconciliationService.stop();
+
+        process.exit(0);
+      });
+
+      // Force shutdown after 10 seconds
+      setTimeout(() => {
+        log.error("SHUTDOWN", "Forced shutdown after timeout");
+        process.exit(1);
+      }, 10000);
+    };
+
+    // Handle shutdown signals
+    process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+    process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+    return server;
+  } catch (error) {
+    log.error("APP", "❌ Failed to start server", {
+      error: error.message,
+      stack: config.server.isDevelopment ? error.stack : undefined,
+    });
+    process.exit(1);
+  }
 }
 
 if (require.main === module) {
