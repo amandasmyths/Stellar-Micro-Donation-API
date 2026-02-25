@@ -226,6 +226,7 @@ Stellar-Micro-Donation-API/
 │   │   ├── donation.js
 │   │   ├── wallet.js
 │   │   ├── stream.js
+│   │   ├── transaction.js
 │   │   └── stats.js
 │   ├── services/         # Business logic services
 │   │   ├── StellarService.js
@@ -234,12 +235,25 @@ Stellar-Micro-Donation-API/
 │   ├── scripts/          # Database scripts
 │   │   └── initDB.js
 │   └── utils/            # Utility functions
-│       └── database.js
+│       ├── database.js
+│       └── permissions.js
 ├── data/                 # SQLite database files
 ├── docs/                 # Documentation
 ├── tests/                # Test files
 └── package.json
 ```
+
+### API Key Permissions
+
+The API uses role-based access control (RBAC) with three roles:
+
+| Role | Permissions | Use Case |
+|------|-------------|----------|
+| **admin** | All permissions (`*`) | System administration, API key management |
+| **user** | donations:*, wallets:*, stream:*, stats:read, transactions:* | Standard API operations |
+| **guest** | donations:read, stats:read | Read-only public access |
+
+For detailed permission audit and security hardening, see [API Key Permissions Audit](docs/API_KEY_PERMISSIONS_AUDIT.md).
 
 ### Environment Variables
 

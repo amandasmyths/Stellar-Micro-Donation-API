@@ -4,6 +4,7 @@ const donationRoutes = require('./donation');
 const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
+const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
@@ -31,6 +32,7 @@ app.use('/donations', donationRoutes);
 app.use('/wallets', walletRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
+app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
 
 // Health check endpoint
