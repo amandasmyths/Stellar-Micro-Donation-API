@@ -21,6 +21,7 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - **Analytics**: Get donation statistics and summaries
 - **API Key Rotation**: Zero-downtime key rotation with versioning and graceful deprecation
 - **Mock Mode**: Development mode with simulated Stellar operations
+- **Debug Mode**: Configurable verbose logging for local development troubleshooting
 - **Failure Simulation**: Comprehensive network failure testing for robust error handling
 - **Automated Scheduler**: Background service for executing recurring donations
 - **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
@@ -106,6 +107,19 @@ For development with auto-reload:
 ```bash
 npm run dev
 ```
+
+### Debug Mode
+
+Enable verbose logging for troubleshooting:
+```bash
+# Add to .env file
+DEBUG_MODE=true
+
+# Start server with debug logging
+npm start
+```
+
+See [Debug Mode Documentation](docs/features/DEBUG_MODE.md) for details.
 
 ## 📡 API Endpoints
 
@@ -212,6 +226,7 @@ Stellar-Micro-Donation-API/
 │   │   ├── donation.js
 │   │   ├── wallet.js
 │   │   ├── stream.js
+│   │   ├── transaction.js
 │   │   └── stats.js
 │   ├── services/         # Business logic services
 │   │   ├── StellarService.js
@@ -220,12 +235,25 @@ Stellar-Micro-Donation-API/
 │   ├── scripts/          # Database scripts
 │   │   └── initDB.js
 │   └── utils/            # Utility functions
-│       └── database.js
+│       ├── database.js
+│       └── permissions.js
 ├── data/                 # SQLite database files
 ├── docs/                 # Documentation
 ├── tests/                # Test files
 └── package.json
 ```
+
+### API Key Permissions
+
+The API uses role-based access control (RBAC) with three roles:
+
+| Role | Permissions | Use Case |
+|------|-------------|----------|
+| **admin** | All permissions (`*`) | System administration, API key management |
+| **user** | donations:*, wallets:*, stream:*, stats:read, transactions:* | Standard API operations |
+| **guest** | donations:read, stats:read | Read-only public access |
+
+For detailed permission audit and security hardening, see [API Key Permissions Audit](docs/API_KEY_PERMISSIONS_AUDIT.md).
 
 ### Environment Variables
 
