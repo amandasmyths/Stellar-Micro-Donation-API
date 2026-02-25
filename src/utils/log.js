@@ -1,3 +1,5 @@
+const { maskSensitiveData, maskError } = require('./dataMasker');
+
 function safeStringify(value) {
   try {
     return JSON.stringify(value);
@@ -14,7 +16,12 @@ function formatMessage(level, scope, message, meta) {
     return base;
   }
 
-  return `${base} ${safeStringify(meta)}`;
+  // Mask sensitive data before logging
+  const maskedMeta = maskSensitiveData(meta, {
+    showPartial: process.env.LOG_SHOW_PARTIAL === 'true'
+  });
+
+  return `${base} ${safeStringify(maskedMeta)}`;
 }
 
 function info(scope, message, meta) {
@@ -26,7 +33,15 @@ function warn(scope, message, meta) {
 }
 
 function error(scope, message, meta) {
-  console.error(formatMessage('ERROR', scope, message, meta));
+  // Special handling for error objects
+  let maskedMeta = meta;
+  if (meta && meta.error instanceof Error) {
+    maskedMeta = {
+      ...meta,
+      error: maskError(meta.error)
+    };
+  }
+  console.error(formatMessage('ERROR', scope, message, maskedMeta));
 }
 
 module.exports = {

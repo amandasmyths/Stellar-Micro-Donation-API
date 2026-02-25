@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../utils/log');
+const { maskSensitiveData } = require('../utils/dataMasker');
 
 /**
  * Logger Middleware for Request/Response Logging
@@ -43,37 +44,14 @@ class Logger {
 
   /**
    * Sanitize object by removing sensitive fields
+   * Uses the centralized dataMasker utility for consistent masking
    * @param {Object} obj - Object to sanitize
    * @returns {Object} Sanitized object
    */
   sanitize(obj) {
-    if (!obj || typeof obj !== 'object') {
-      return obj;
-    }
-
-    if (Array.isArray(obj)) {
-      return obj.map(item => this.sanitize(item));
-    }
-
-    const sanitized = {};
-    for (const [key, value] of Object.entries(obj)) {
-      const lowerKey = key.toLowerCase();
-      
-      // Check if field is sensitive
-      const isSensitive = this.sensitiveFields.some(field => 
-        lowerKey.includes(field.toLowerCase())
-      );
-
-      if (isSensitive) {
-        sanitized[key] = '[REDACTED]';
-      } else if (typeof value === 'object' && value !== null) {
-        sanitized[key] = this.sanitize(value);
-      } else {
-        sanitized[key] = value;
-      }
-    }
-
-    return sanitized;
+    return maskSensitiveData(obj, {
+      showPartial: process.env.LOG_SHOW_PARTIAL === 'true'
+    });
   }
 
   /**

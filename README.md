@@ -23,6 +23,7 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - **Automated Scheduler**: Background service for executing recurring donations
 - **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
 - **Idempotency**: Prevent duplicate transactions with idempotency key support
+- **Sensitive Data Masking**: Automatic masking of secrets, API keys, and private values in all logs
 
 ## 🏗️ Architecture
 
