@@ -3,10 +3,13 @@
  * Handles actual blockchain interactions with Stellar network
  */
 
+// External modules
 const StellarSdk = require('stellar-sdk');
-const StellarErrorHandler = require('../utils/stellarErrorHandler');
-const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+
+// Internal modules
 const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
+const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 
 class StellarService extends StellarServiceInterface {

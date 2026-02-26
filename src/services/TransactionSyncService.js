@@ -3,7 +3,10 @@
  * Synchronizes transactions from Stellar Horizon API to local database
  * Fetches transaction history and creates local records for new transactions
  */
+// External modules
 const StellarSdk = require('stellar-sdk');
+
+// Internal modules
 const Transaction = require('../routes/models/transaction');
 const { HORIZON_URLS } = require('../constants');
 

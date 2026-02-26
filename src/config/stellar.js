@@ -3,8 +3,13 @@
  * Now uses centralized ServiceContainer for dependency injection
  * This file is kept for backward compatibility
  */
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+// Built-in modules
 const path = require('path');
+
+// External modules
+require('dotenv').config({ path: path.join(__dirname, '../../.env') });
+
+// Internal modules
 const { validateEnvironment } = require('./envValidation');
 const log = require('../utils/log');
 

@@ -1,6 +1,9 @@
+// External modules
 const { Horizon } = require('stellar-sdk');
-const Database = require('../../utils/database'); // Adjusted path
-const config = require('../../config/stellar');  // Adjusted path
+
+// Internal modules
+const Database = require('../../utils/database');
+const config = require('../../config/stellar');
 
 class AnalyticsService {
   constructor() {

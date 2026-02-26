@@ -1,7 +1,11 @@
-require('dotenv').config({ path: require('path').join(__dirname, '../../src/.env') });
-
-const sqlite3 = require('sqlite3').verbose();
+// Built-in modules
 const path = require('path');
+
+// External modules
+const sqlite3 = require('sqlite3').verbose();
+require('dotenv').config({ path: path.join(__dirname, '../../src/.env') });
+
+// Internal modules
 const { DatabaseError, DuplicateError } = require('./errors');
 
 const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');

@@ -10,7 +10,10 @@
  *   node src/scripts/manageApiKeys.js cleanup --retention 90
  */
 
+// External modules
 require('dotenv').config();
+
+// Internal modules
 const apiKeysModel = require('../models/apiKeys');
 const { initializeApiKeysTable } = require('../models/apiKeys');
 

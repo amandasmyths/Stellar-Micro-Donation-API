@@ -1,5 +1,8 @@
+// Built-in modules
 const fs = require('fs');
 const path = require('path');
+
+// Internal modules
 const log = require('../utils/log');
 
 const ROLES_CONFIG_PATH = path.join(__dirname, '../config/roles.json');
