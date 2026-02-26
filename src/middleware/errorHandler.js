@@ -1,6 +1,14 @@
 /**
- * Global Error Handler Middleware
- * Intent: Provide a centralized, secure catch-all for all application errors to
+ * Global Error Handler Middleware - Error Management Layer
+ * 
+ * RESPONSIBILITY: Centralized error handling, sanitization, and response formatting
+ * OWNER: Backend Team
+ * DEPENDENCIES: Logger, error utilities, data masker
+ * 
+ * Provides secure catch-all for all application errors, preventing sensitive data leaks
+ * and ensuring consistent JSON error responses with request correlation.
+ * 
+ * Intent: Provide a centralized, secure catch-all for all application errors to 
  * prevent leaking sensitive stack traces and ensure a consistent JSON error format.
  * Flow:
  * 1. Log the error with high-context metadata (Request ID, Method, Path).
