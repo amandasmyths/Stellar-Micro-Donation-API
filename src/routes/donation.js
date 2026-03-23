@@ -25,6 +25,7 @@ const { parseCursorPaginationQuery } = require('../utils/pagination');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
+const Transaction = require('./models/transaction');
 const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 const federation = require('../utils/federation');
 const stellarService = getStellarService();
@@ -476,5 +477,103 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
     next(error);
   }
 });
+
+// ─── Claimable Balance Endpoints ─────────────────────────────────────────────
+
+const createClaimableSchema = validateSchema({
+  body: {
+    fields: {
+      sourceSecret: { type: 'string', required: true },
+      amount: { type: 'numberString', required: true, min: 0.0000001 },
+      claimants: { type: 'array', required: true },
+      predicate: { type: 'object', required: false, nullable: true },
+    },
+  },
+});
+
+/**
+ * POST /donations/claimable
+ * Create a claimable balance (XLM held until claimed by an eligible account).
+ * Supports time-based predicates (notBefore / notAfter as Unix ms timestamps).
+ */
+router.post(
+  '/claimable',
+  requireApiKey,
+  donationRateLimiter,
+  checkPermission(PERMISSIONS.DONATIONS_CREATE),
+  createClaimableSchema,
+  async (req, res, next) => {
+    try {
+      const { sourceSecret, amount, claimants, predicate } = req.body;
+
+      if (!Array.isArray(claimants) || claimants.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'claimants must be a non-empty array' },
+        });
+      }
+
+      const result = await stellarService.createClaimableBalance({
+        sourceSecret,
+        amount,
+        claimants,
+        predicate: predicate || null,
+      });
+
+      // Store claimable balance ID in transaction records
+      Transaction.create({
+        amount: parseFloat(amount),
+        donor: claimants[0] && claimants[0].destination,
+        recipient: claimants.map(c => c.destination).join(','),
+        status: 'pending',
+        stellarTxId: result.transactionId,
+        stellarLedger: result.ledger,
+        balanceId: result.balanceId,
+        type: 'claimable',
+      });
+
+      if (req.markLifecycleStage) req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+
+      return res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * POST /donations/claimable/:id/claim
+ * Claim a claimable balance by its ID.
+ */
+router.post(
+  '/claimable/:id/claim',
+  requireApiKey,
+  donationRateLimiter,
+  checkPermission(PERMISSIONS.DONATIONS_CREATE),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { claimantSecret } = req.body;
+
+      if (!claimantSecret) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'claimantSecret is required' },
+        });
+      }
+
+      const result = await stellarService.claimBalance({
+        balanceId: id,
+        claimantSecret,
+      });
+
+      if (req.markLifecycleStage) req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 module.exports = router;

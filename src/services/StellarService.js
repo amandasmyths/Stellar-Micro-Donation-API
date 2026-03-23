@@ -423,6 +423,158 @@ class StellarService extends StellarServiceInterface {
       };
     }, 'verifyTransaction');
   }
+
+  /**
+   * Create a claimable balance on the Stellar network.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Funding account secret key
+   * @param {string} params.amount - Amount in XLM
+   * @param {Array<{destination: string, predicate?: Object}>} params.claimants - Claimants list
+   * @param {Object} [params.predicate] - Optional time-based predicate (notBefore/notAfter ms timestamps)
+   * @returns {Promise<{balanceId: string, transactionId: string, ledger: number}>}
+   */
+  async createClaimableBalance({ sourceSecret, amount, claimants, predicate = null }) {
+    return StellarErrorHandler.wrap(async () => {
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const sourceAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForClaimableBalance'
+      );
+
+      const networkPassphrase = this.network === 'public'
+        ? StellarSdk.Networks.PUBLIC
+        : StellarSdk.Networks.TESTNET;
+
+      const stellarClaimants = claimants.map(c => {
+        let stellarPredicate = StellarSdk.Claimant.predicateUnconditional();
+        const p = c.predicate || predicate;
+        if (p) {
+          const preds = [];
+          if (p.notBefore) {
+            preds.push(StellarSdk.Claimant.predicateNot(
+              StellarSdk.Claimant.predicateBeforeAbsoluteTime(
+                Math.floor(p.notBefore / 1000).toString()
+              )
+            ));
+          }
+          if (p.notAfter) {
+            preds.push(StellarSdk.Claimant.predicateBeforeAbsoluteTime(
+              Math.floor(p.notAfter / 1000).toString()
+            ));
+          }
+          if (preds.length === 1) stellarPredicate = preds[0];
+          else if (preds.length === 2) stellarPredicate = StellarSdk.Claimant.predicateAnd(...preds);
+        }
+        return new StellarSdk.Claimant(c.destination, stellarPredicate);
+      });
+
+      const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.createClaimableBalance({
+          asset: StellarSdk.Asset.native(),
+          amount: amount.toString(),
+          claimants: stellarClaimants,
+        }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(sourceKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+
+      // Extract balance ID from operation result
+      const opResult = result.result_meta_xdr
+        ? StellarSdk.xdr.TransactionMeta.fromXDR(result.result_meta_xdr, 'base64')
+        : null;
+      let balanceId = null;
+      if (opResult) {
+        try {
+          const ops = opResult.v2().operations();
+          if (ops && ops[0]) {
+            const inner = ops[0].changes();
+            for (const change of inner) {
+              if (change.switch().name === 'ledgerEntryCreated') {
+                const entry = change.created().data();
+                if (entry.switch().name === 'claimableBalance') {
+                  balanceId = StellarSdk.StrKey.encodeClaimableBalance(
+                    entry.claimableBalance().balanceId().toXDR()
+                  );
+                }
+              }
+            }
+          }
+        } catch (_) { /* balanceId stays null if XDR parsing fails */ }
+      }
+
+      return { balanceId, transactionId: result.hash, ledger: result.ledger };
+    }, 'createClaimableBalance');
+  }
+
+  /**
+   * Merge multiple partially-signed XDR envelopes and submit to Stellar.
+   *
+   * Each entry in `signatures` must contain a `signed_xdr` field that is a
+   * base-64 XDR TransactionEnvelope already signed by one signer.  The method
+   * collects all signatures from those envelopes, attaches them to the base
+   * transaction, and submits the result.
+   *
+   * @param {Object}   params
+   * @param {string}   params.transaction_xdr    - Base-64 XDR of the unsigned transaction
+   * @param {string}   params.network_passphrase - Stellar network passphrase
+   * @param {Object[]} params.signatures         - [{signer, signed_xdr}]
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async submitMultiSigTransaction({ transaction_xdr, network_passphrase, signatures }) {
+    return StellarErrorHandler.wrap(async () => {
+      const baseTx = new StellarSdk.Transaction(transaction_xdr, network_passphrase);
+
+      for (const { signed_xdr } of signatures) {
+        const signedTx = new StellarSdk.Transaction(signed_xdr, network_passphrase);
+        for (const sig of signedTx.signatures) {
+          baseTx.signatures.push(sig);
+        }
+      }
+
+      const result = await this._submitTransactionWithNetworkSafety(baseTx);
+      return { transactionId: result.hash, ledger: result.ledger };
+    }, 'submitMultiSigTransaction');
+  }
+
+  /**
+   * Claim a claimable balance.
+   *
+   * @param {Object} params
+   * @param {string} params.balanceId - Claimable balance ID
+   * @param {string} params.claimantSecret - Claimant account secret key
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async claimBalance({ balanceId, claimantSecret }) {
+    return StellarErrorHandler.wrap(async () => {
+      const claimantKeypair = StellarSdk.Keypair.fromSecret(claimantSecret);
+      const claimantAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(claimantKeypair.publicKey()),
+        'loadAccountForClaim'
+      );
+
+      const networkPassphrase = this.network === 'public'
+        ? StellarSdk.Networks.PUBLIC
+        : StellarSdk.Networks.TESTNET;
+
+      const tx = new StellarSdk.TransactionBuilder(claimantAccount, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.claimClaimableBalance({ balanceId }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(claimantKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      return { transactionId: result.hash, ledger: result.ledger };
+    }, 'claimBalance');
+  }
 }
 
 module.exports = StellarService;

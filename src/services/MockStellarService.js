@@ -849,6 +849,7 @@ class MockStellarService extends StellarServiceInterface {
     this.wallets.clear();
     this.transactions.clear();
     this.streamListeners.clear();
+    if (this.claimableBalances) this.claimableBalances.clear();
   }
 
   /**
@@ -861,6 +862,198 @@ class MockStellarService extends StellarServiceInterface {
       transactions: Object.fromEntries(this.transactions),
       streamListeners: this.streamListeners.size,
     };
+  }
+
+  /**
+   * Create a claimable balance on the mock Stellar network.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Funding account secret key
+   * @param {string} params.amount - Amount in XLM
+   * @param {Array<{destination: string, predicate?: Object}>} params.claimants - List of claimants
+   * @param {Object} [params.predicate] - Optional time-based predicate applied to all claimants
+   * @returns {Promise<{balanceId: string, transactionId: string, ledger: number}>}
+   */
+  async createClaimableBalance({ sourceSecret, amount, claimants, predicate = null }) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    this._validateSecretKey(sourceSecret);
+    this._validateAmount(amount);
+
+    if (!Array.isArray(claimants) || claimants.length === 0) {
+      throw new ValidationError('At least one claimant is required');
+    }
+    if (claimants.length > 10) {
+      throw new ValidationError('Maximum 10 claimants allowed');
+    }
+    for (const c of claimants) {
+      this._validatePublicKey(c.destination);
+    }
+
+    // Derive source public key from secret (mock: just look it up or derive)
+    const sourcePublic = this._secretToPublic(sourceSecret);
+    const wallet = this.wallets.get(sourcePublic);
+    if (!wallet) {
+      throw new NotFoundError('Source account not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    const amountNum = parseFloat(amount);
+    const balanceNum = parseFloat(wallet.balance);
+    if (balanceNum < amountNum) {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        'Insufficient balance for claimable balance creation'
+      );
+    }
+
+    // Deduct from source
+    wallet.balance = (balanceNum - amountNum).toFixed(7);
+
+    const balanceId = `00000000${crypto.randomBytes(28).toString('hex')}`;
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    if (!this.claimableBalances) this.claimableBalances = new Map();
+
+    this.claimableBalances.set(balanceId, {
+      balanceId,
+      amount,
+      claimants: claimants.map(c => ({ destination: c.destination, predicate: c.predicate || predicate || null })),
+      sponsor: sourcePublic,
+      claimed: false,
+      claimedBy: null,
+      createdAt: new Date().toISOString(),
+      predicate,
+    });
+
+    return { balanceId, transactionId: txId, ledger };
+  }
+
+  /**
+   * Claim a claimable balance.
+   *
+   * @param {Object} params
+   * @param {string} params.balanceId - Claimable balance ID
+   * @param {string} params.claimantSecret - Claimant account secret key
+   * @returns {Promise<{transactionId: string, ledger: number, amount: string}>}
+   */
+  async claimBalance({ balanceId, claimantSecret }) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    this._validateSecretKey(claimantSecret);
+
+    if (!this.claimableBalances) this.claimableBalances = new Map();
+
+    const balance = this.claimableBalances.get(balanceId);
+    if (!balance) {
+      throw new NotFoundError('Claimable balance not found', ERROR_CODES.NOT_FOUND);
+    }
+    if (balance.claimed) {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        'Claimable balance has already been claimed'
+      );
+    }
+
+    const claimantPublic = this._secretToPublic(claimantSecret);
+    const eligible = balance.claimants.find(c => c.destination === claimantPublic);
+    if (!eligible) {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        'Account is not an eligible claimant for this balance'
+      );
+    }
+
+    // Check time predicate if present
+    const pred = eligible.predicate || balance.predicate;
+    if (pred) {
+      const now = Date.now();
+      if (pred.notBefore && now < pred.notBefore) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Claimable balance is not yet available (notBefore condition not met)'
+        );
+      }
+      if (pred.notAfter && now > pred.notAfter) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Claimable balance has expired (notAfter condition exceeded)'
+        );
+      }
+    }
+
+    // Credit claimant
+    let claimantWallet = this.wallets.get(claimantPublic);
+    if (!claimantWallet) {
+      // Auto-create wallet for unactivated accounts (the main use-case)
+      claimantWallet = { publicKey: claimantPublic, balance: '0', createdAt: new Date().toISOString() };
+      this.wallets.set(claimantPublic, claimantWallet);
+    }
+    claimantWallet.balance = (parseFloat(claimantWallet.balance) + parseFloat(balance.amount)).toFixed(7);
+
+    balance.claimed = true;
+    balance.claimedBy = claimantPublic;
+    balance.claimedAt = new Date().toISOString();
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    return { transactionId: txId, ledger, amount: balance.amount };
+  }
+
+  /**
+   * Simulate submitting a fully-signed multi-sig transaction.
+   *
+   * @param {Object} params
+   * @param {string}   params.transaction_xdr    - Base-64 XDR of the unsigned transaction
+   * @param {string}   params.network_passphrase - Stellar network passphrase
+   * @param {Object[]} params.signatures         - [{signer, signed_xdr}]
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async submitMultiSigTransaction({ transaction_xdr, network_passphrase, signatures }) {
+    this._simulateFailure();
+
+    if (!transaction_xdr || !network_passphrase) {
+      throw new ValidationError('transaction_xdr and network_passphrase are required');
+    }
+    if (!Array.isArray(signatures) || signatures.length === 0) {
+      throw new ValidationError('At least one signature is required');
+    }
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    log.info('MOCK_STELLAR_SERVICE', 'Multi-sig transaction submitted', {
+      txId,
+      ledger,
+      signerCount: signatures.length,
+    });
+
+    return { transactionId: txId, ledger };
+  }
+
+  /**
+   * Derive a mock public key from a secret key (deterministic for test consistency).
+   * @private
+   */
+  _secretToPublic(secretKey) {
+    // Check if we have a wallet with this secret
+    for (const [pub, wallet] of this.wallets.entries()) {
+      if (wallet.secretKey === secretKey) return pub;
+    }
+    // Deterministic derivation for unknown secrets: hash S→G
+    const hash = crypto.createHash('sha256').update(secretKey).digest('hex');
+    // eslint-disable-next-line no-secrets/no-secrets
+    const base32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let pub = 'G';
+    for (let i = 0; i < 55; i++) {
+      pub += base32[parseInt(hash[i % 64], 16) % 32];
+    }
+    return pub;
   }
 }
 
