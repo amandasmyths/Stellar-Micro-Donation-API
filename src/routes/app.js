@@ -25,6 +25,7 @@ const { attachUserRole } = require('../middleware/rbac');
 const abuseDetectionMiddleware = require('../middleware/abuseDetection');
 const replayDetectionMiddleware = require('../middleware/replayDetection');
 const Database = require('../utils/database');
+const HealthCheckService = require('../services/HealthCheckService');
 const { initializeApiKeysTable } = require('../models/apiKeys');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
@@ -83,27 +84,23 @@ app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
 app.use('/fees', feesRoutes);
 
-// Health check endpoint
+// Health check endpoints
 app.get('/health', async (req, res) => {
-  try {
-    await Database.get('SELECT 1 as ok');
-    return res.status(200).json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      dependencies: { database: 'ok' },
-      services: {
-        recurringDonations: recurringDonationScheduler.getStatus(),
-        reconciliation: reconciliationService.getStatus()
-      }
-    });
-  } catch (error) {
-    return res.status(503).json({
-      status: 'degraded',
-      timestamp: new Date().toISOString(),
-      dependencies: { database: 'error' },
-      error: error.message
-    });
-  }
+  const health = await HealthCheckService.getFullHealth(stellarService);
+  const httpStatus = health.status === 'unhealthy' ? 503 : 200;
+  return res.status(httpStatus).json(health);
+});
+
+// Liveness probe — returns 200 as long as the process is running
+app.get('/health/live', (req, res) => {
+  return res.status(200).json(HealthCheckService.getLiveness());
+});
+
+// Readiness probe — returns 200 only when all dependencies are healthy
+app.get('/health/ready', async (req, res) => {
+  const readiness = await HealthCheckService.getReadiness(stellarService);
+  const httpStatus = readiness.ready ? 200 : 503;
+  return res.status(httpStatus).json(readiness);
 });
 
 // Abuse detection stats endpoint (admin only)
@@ -126,6 +123,28 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
     data: suspiciousPatternDetector.getMetrics(),
     timestamp: new Date().toISOString()
   });
+});
+
+// Idempotency stats endpoint (admin only)
+app.get('/admin/idempotency/stats', require('../middleware/rbac').requireAdmin(), async (req, res) => {
+  try {
+    const IdempotencyService = require('../services/IdempotencyService');
+    const stats = await IdempotencyService.getStats();
+    const oldest = await require('../utils/database').get(
+      `SELECT MIN(createdAt) as oldest FROM idempotency_keys WHERE datetime(expiresAt) > datetime('now')`
+    );
+    return res.json({
+      success: true,
+      data: {
+        ...stats,
+        oldestActiveKeyAge: oldest && oldest.oldest
+          ? Math.floor((Date.now() - new Date(oldest.oldest).getTime()) / 1000)
+          : null,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: { message: err.message } });
+  }
 });
 
 // Replay detection stats endpoint (admin only)
@@ -159,6 +178,34 @@ app.get('/admin/replay-stats', require('../middleware/rbac').requireAdmin(), (re
       },
       timestamp: new Date().toISOString()
     });
+  }
+});
+
+// Audit logs endpoint (admin only)
+app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+  try {
+    const pagination = parseCursorPaginationQuery(req.query);
+    const filters = {
+      category: req.query.category,
+      action: req.query.action,
+      severity: req.query.severity,
+      userId: req.query.userId,
+      requestId: req.query.requestId,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+    };
+
+    const result = await AuditLogService.queryPaginated(filters, pagination);
+
+    res.setHeader('X-Total-Count', String(result.totalCount));
+    res.json({
+      success: true,
+      data: result.data,
+      count: result.data.length,
+      meta: result.meta
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -278,7 +325,7 @@ async function startServer() {
     const gracefulShutdown = async (signal) => {
       logShutdownDiagnostics(signal);
 
-      server.close(() => {
+      server.close(async () => {
         log.info("SHUTDOWN", "HTTP server closed");
         recurringDonationScheduler.stop();
         reconciliationService.stop();
@@ -287,6 +334,9 @@ async function startServer() {
           clearInterval(replayCleanupTimer);
           log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
         }
+
+        await Database.close();
+        log.info("SHUTDOWN", "Database pool closed");
 
         process.exit(0);
       });

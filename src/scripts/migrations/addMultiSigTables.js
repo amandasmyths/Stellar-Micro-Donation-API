@@ -1,6 +1,7 @@
 /**
  * Migration: Add multi-signature support tables
- * Creates multisig_transactions table for holding pending multi-sig transactions.
+ * Adds multisig_configs and multisig_signatures tables, and required_signers/signer_keys
+ * columns to the wallets table (if it exists).
  */
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
@@ -22,22 +23,24 @@ async function migrate() {
   });
 
   try {
+    // Pending multi-sig transactions
     await run(db, `
       CREATE TABLE IF NOT EXISTS multisig_transactions (
-        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-        transaction_xdr      TEXT    NOT NULL,
-        network_passphrase   TEXT    NOT NULL,
-        required_signers     INTEGER NOT NULL,
-        signer_keys          TEXT    NOT NULL,
-        collected_signatures TEXT    NOT NULL DEFAULT '[]',
-        status               TEXT    NOT NULL DEFAULT 'pending',
-        stellar_tx_hash      TEXT,
-        stellar_ledger       INTEGER,
-        metadata             TEXT,
-        created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_xdr TEXT NOT NULL,
+        network_passphrase TEXT NOT NULL,
+        required_signers INTEGER NOT NULL,
+        signer_keys TEXT NOT NULL,
+        collected_signatures TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'pending',
+        stellar_tx_hash TEXT,
+        stellar_ledger INTEGER,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
     console.log('✓ Created multisig_transactions table');
   } finally {
     db.close();
