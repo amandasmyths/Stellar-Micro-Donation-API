@@ -28,6 +28,8 @@ const apiKeyCreateSchema = validateSchema({
       role: { type: 'string', required: false, enum: ['admin', 'user', 'guest'] },
       expiresInDays: { type: 'integer', required: false, min: 1 },
       metadata: { type: 'object', required: false, nullable: true },
+      rateLimit: { type: 'integer', required: false, min: 1 },
+      rateLimitWindowSeconds: { type: 'integer', required: false, min: 1 },
     },
   },
 });
@@ -64,7 +66,7 @@ const apiKeyCleanupSchema = validateSchema({
  */
 router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
   try {
-    const { name, role = 'user', expiresInDays, metadata } = req.body;
+    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds } = req.body;
 
     const nameValidation = validateNonEmptyString(name, 'Name');
     if (!nameValidation.valid) {
@@ -88,7 +90,9 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
       role,
       expiresInDays,
       createdBy: req.user.id,
-      metadata: metadata || {}
+      metadata: metadata || {},
+      rateLimit: rateLimit || null,
+      rateLimitWindowSeconds: rateLimitWindowSeconds || null,
     });
 
     // Audit log: API key created
@@ -121,6 +125,8 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
         status: keyInfo.status,
         createdAt: keyInfo.createdAt,
         expiresAt: keyInfo.expiresAt,
+        rateLimit: keyInfo.rateLimit,
+        rateLimitWindowSeconds: keyInfo.rateLimitWindowSeconds,
         warning: 'Store this key securely. It will not be shown again.'
       }
     });
