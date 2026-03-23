@@ -55,7 +55,9 @@ module.exports = async () => {
       last_used_at INTEGER,
       deprecated_at INTEGER,
       revoked_at INTEGER,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      rate_limit INTEGER,
+      rate_limit_window_seconds INTEGER
     )`);
     await Database.run(`CREATE TABLE IF NOT EXISTS audit_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

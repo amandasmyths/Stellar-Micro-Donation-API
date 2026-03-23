@@ -13,6 +13,7 @@ const { securityConfig } = require("../config/securityConfig");
 const { validateKey } = require("../models/apiKeys");
 const log = require("../utils/log");
 const AuditLogService = require("../services/AuditLogService");
+const perKeyRateLimit = require("./perKeyRateLimit");
 
 /**
  * Legacy Support Configuration
@@ -104,7 +105,7 @@ const requireApiKey = async (req, res, next) => {
         );
       }
 
-      return next();
+      return perKeyRateLimit(req, res, next);
     }
 
     // Stage 2: Attempt Legacy Fallback (Static keys defined in environment variables)

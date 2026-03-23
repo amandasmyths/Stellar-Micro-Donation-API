@@ -28,6 +28,8 @@ const apiKeyCreateSchema = validateSchema({
       role: { type: 'string', required: false, enum: ['admin', 'user', 'guest'] },
       expiresInDays: { type: 'integer', required: false, min: 1 },
       metadata: { type: 'object', required: false, nullable: true },
+      rateLimit: { type: 'integer', required: false, min: 1 },
+      rateLimitWindowSeconds: { type: 'integer', required: false, min: 1 },
     },
   },
 });
@@ -64,7 +66,7 @@ const apiKeyCleanupSchema = validateSchema({
  */
 router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
   try {
-    const { name, role = 'user', expiresInDays, metadata } = req.body;
+    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds } = req.body;
 
     const nameValidation = validateNonEmptyString(name, 'Name');
     if (!nameValidation.valid) {
@@ -88,7 +90,9 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
       role,
       expiresInDays,
       createdBy: req.user.id,
-      metadata: metadata || {}
+      metadata: metadata || {},
+      rateLimit: rateLimit || null,
+      rateLimitWindowSeconds: rateLimitWindowSeconds || null,
     });
 
     // Audit log: API key created
@@ -121,6 +125,8 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
         status: keyInfo.status,
         createdAt: keyInfo.createdAt,
         expiresAt: keyInfo.expiresAt,
+        rateLimit: keyInfo.rateLimit,
+        rateLimitWindowSeconds: keyInfo.rateLimitWindowSeconds,
         warning: 'Store this key securely. It will not be shown again.'
       }
     });
@@ -165,6 +171,35 @@ router.get('/', requireAdmin(), apiKeyListQuerySchema, async (req, res, next) =>
     });
   } catch (error) {
     next(error);
+  }
+});
+
+/**
+ * PATCH /api/v1/api-keys/:id
+ * Update rate limit configuration for an API key (admin only)
+ */
+router.patch('/:id', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const keyIdValidation = validateInteger(req.params.id, { min: 1 });
+    if (!keyIdValidation.valid) return res.status(400).json({ success: false, error: { message: keyIdValidation.error } });
+
+    const { rateLimit, rateLimitWindowSeconds } = req.body;
+
+    if (rateLimit !== undefined && rateLimit !== null) {
+      const v = validateInteger(rateLimit, { min: 1 });
+      if (!v.valid) return res.status(400).json({ success: false, error: { message: `Invalid rateLimit: ${v.error}` } });
+    }
+    if (rateLimitWindowSeconds !== undefined && rateLimitWindowSeconds !== null) {
+      const v = validateInteger(rateLimitWindowSeconds, { min: 1 });
+      if (!v.valid) return res.status(400).json({ success: false, error: { message: `Invalid rateLimitWindowSeconds: ${v.error}` } });
+    }
+
+    const updated = await apiKeysModel.updateApiKey(keyIdValidation.value, { rateLimit, rateLimitWindowSeconds });
+    if (!updated) return res.status(404).json({ success: false, error: { message: 'API key not found or revoked' } });
+
+    return res.json({ success: true, message: 'API key updated successfully' });
+  } catch (err) {
+    next(err);
   }
 });
 

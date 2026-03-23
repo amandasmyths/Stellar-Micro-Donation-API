@@ -17,7 +17,9 @@ const CREATE_TABLE_SQL = `
     last_used_at INTEGER,
     deprecated_at INTEGER,
     revoked_at INTEGER,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    rate_limit INTEGER,
+    rate_limit_window_seconds INTEGER
   )
 `;
 
@@ -25,7 +27,7 @@ async function initializeApiKeysTable() {
   await db.run(CREATE_TABLE_SQL);
 }
 
-async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {} }) {
+async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {}, rateLimit = null, rateLimitWindowSeconds = null }) {
   await initializeApiKeysTable();
   const rawKey = crypto.randomBytes(32).toString('hex');
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
@@ -34,9 +36,9 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
   const expiresAt = expiresInDays ? now + expiresInDays * 24 * 60 * 60 * 1000 : null;
 
   const result = await db.run(
-    `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at)
-     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-    [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now]
+    `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at, rate_limit, rate_limit_window_seconds)
+     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
+    [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now, rateLimit, rateLimitWindowSeconds]
   );
 
   return {
@@ -48,6 +50,8 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
     status: API_KEY_STATUS.ACTIVE,
     createdAt: new Date(now).toISOString(),
     expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+    rateLimit,
+    rateLimitWindowSeconds,
   };
 }
 
@@ -77,6 +81,8 @@ async function validateApiKey(rawKey) {
     isDeprecated: row.status === API_KEY_STATUS.DEPRECATED,
     last_used_at: now,
     metadata: row.metadata ? JSON.parse(row.metadata) : {},
+    rateLimit: row.rate_limit || null,
+    rateLimitWindowSeconds: row.rate_limit_window_seconds || null,
   };
 }
 
@@ -125,6 +131,15 @@ async function revokeApiKey(id) {
   return result.changes > 0;
 }
 
+async function updateApiKey(id, { rateLimit, rateLimitWindowSeconds }) {
+  await initializeApiKeysTable();
+  const result = await db.run(
+    `UPDATE api_keys SET rate_limit = ?, rate_limit_window_seconds = ? WHERE id = ? AND status != 'revoked'`,
+    [rateLimit ?? null, rateLimitWindowSeconds ?? null, id]
+  );
+  return result.changes > 0;
+}
+
 async function cleanupOldKeys(retentionDays = 90) {
   await initializeApiKeysTable();
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
@@ -143,5 +158,6 @@ module.exports = {
   listApiKeys,
   deprecateApiKey,
   revokeApiKey,
+  updateApiKey,
   cleanupOldKeys,
 };
