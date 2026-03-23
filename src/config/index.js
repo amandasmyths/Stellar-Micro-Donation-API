@@ -252,6 +252,9 @@ const buildConfig = (env, isProduction, isTest) => {
     directory: process.env.LOG_DIR || path.join(__dirname, '../../logs'),
     verbose: parseBoolean(process.env.LOG_VERBOSE, false),
     debugMode: parseBoolean(process.env.DEBUG_MODE, false),
+    format: process.env.LOG_FORMAT || 'text',
+    level: process.env.LOG_LEVEL || 'info',
+    sampleRate: parseFloat(process.env.LOG_SAMPLE_RATE, 1.0, 0.0, 1.0, 'LOG_SAMPLE_RATE'),
   };
 
   // Encryption configuration
