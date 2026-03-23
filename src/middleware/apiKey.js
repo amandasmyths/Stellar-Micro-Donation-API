@@ -105,7 +105,16 @@ const requireApiKey = async (req, res, next) => {
         );
       }
 
-      return perKeyRateLimit(req, res, next);
+      // Suggest rotation when key age exceeds 80% of its grace period
+      if (!keyInfo.isDeprecated && keyInfo.createdAt && keyInfo.gracePeriodDays) {
+        const ageMs = Date.now() - keyInfo.createdAt;
+        const thresholdMs = keyInfo.gracePeriodDays * 0.8 * 24 * 60 * 60 * 1000;
+        if (ageMs >= thresholdMs) {
+          res.setHeader("X-Rotation-Suggested", "true");
+        }
+      }
+
+      return next();
     }
 
     // Stage 2: Attempt Legacy Fallback (Static keys defined in environment variables)
