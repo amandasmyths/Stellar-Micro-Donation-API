@@ -12,6 +12,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
 const { VALID_STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const { getStellarEnvironment } = require('./stellarEnvironments');
 
 /**
  * Configuration error class for clear error messages
@@ -119,6 +120,12 @@ const loadConfig = () => {
   const isProduction = env === 'production';
   const isTest = env === 'test';
 
+  // Prevent mainnet operations in test environment
+  const currentStellarEnv = (process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
+  if (isTest && currentStellarEnv === 'mainnet') {
+    throw new ConfigurationError('CRITICAL: Mainnet operations are strictly prevented when NODE_ENV=test.');
+  }
+
   // Skip validation in test environment
   if (isTest) {
     return buildConfig(env, isProduction, isTest);
@@ -150,12 +157,13 @@ const loadConfig = () => {
     }
   }
 
-  // Validate STELLAR_NETWORK
-  if (process.env.STELLAR_NETWORK) {
-    const network = process.env.STELLAR_NETWORK.toLowerCase();
-    if (!VALID_STELLAR_NETWORKS.includes(network)) {
+  // Validate STELLAR_NETWORK (Legacy) or STELLAR_ENVIRONMENT (New)
+  const stellarEnvRaw = process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK;
+  if (stellarEnvRaw) {
+    const network = stellarEnvRaw.toLowerCase();
+    if (!['testnet', 'mainnet'].includes(network) && !VALID_STELLAR_NETWORKS.includes(network)) {
       errors.push(
-        `STELLAR_NETWORK must be one of: ${VALID_STELLAR_NETWORKS.join(', ')}. Received: "${process.env.STELLAR_NETWORK}".`
+        `Environment must be one of: testnet, mainnet. Received: "${stellarEnvRaw}".`
       );
     }
   }
@@ -210,10 +218,13 @@ const buildConfig = (env, isProduction, isTest) => {
   };
 
   // Stellar configuration
-  const stellarNetwork = (process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
+  const envName = process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK || 'testnet';
+  const environmentConfig = getStellarEnvironment(envName);
+  
   const stellar = {
-    network: stellarNetwork,
-    horizonUrl: process.env.HORIZON_URL || HORIZON_URLS[stellarNetwork] || HORIZON_URLS.testnet,
+    network: environmentConfig.name,
+    environment: environmentConfig,
+    horizonUrl: process.env.HORIZON_URL || environmentConfig.horizonUrl,
     mockEnabled: parseBoolean(process.env.MOCK_STELLAR, false),
     serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
   };
