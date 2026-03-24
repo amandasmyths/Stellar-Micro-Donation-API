@@ -550,6 +550,54 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), recentDonatio
 });
 
 /**
+ * GET /donations/:id/receipt
+ * Generate and return a PDF receipt for a confirmed donation.
+ */
+router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, async (req, res, next) => {
+  try {
+    const ReceiptService = require('../services/ReceiptService');
+    const transaction = donationService.getDonationById(req.params.id);
+
+    const pdf = await ReceiptService.generatePDF(transaction);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="receipt-${transaction.id}.pdf"`,
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /donations/:id/receipt/email
+ * Send a PDF receipt to the provided email address.
+ * Body: { email: string }
+ */
+router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, async (req, res, next) => {
+  try {
+    const ReceiptService = require('../services/ReceiptService');
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, error: { message: 'email is required' } });
+    }
+
+    const transaction = donationService.getDonationById(req.params.id);
+    const result = await ReceiptService.sendEmail({ transaction, toEmail: email });
+
+    res.json({ success: true, data: { messageId: result.messageId } });
+  } catch (error) {
+    if (error.status === 400) {
+      return res.status(400).json({ success: false, error: { message: error.message } });
+    }
+    next(error);
+  }
+});
+
+/**
  * GET /donations/:id
  * Get a specific donation
  */
