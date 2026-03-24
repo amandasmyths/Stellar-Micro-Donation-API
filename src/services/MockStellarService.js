@@ -917,6 +917,7 @@ class MockStellarService extends StellarServiceInterface {
     this.transactions.clear();
     this.streamListeners.clear();
     if (this.claimableBalances) this.claimableBalances.clear();
+    if (this.offers) this.offers.clear();
   }
 
   /**
@@ -1126,6 +1127,124 @@ class MockStellarService extends StellarServiceInterface {
       baseFee: BASE_FEE_STROOPS,
       surgeProtection,
       surgeMultiplier: parseFloat(multiplier.toFixed(2)),
+    };
+  }
+
+  /**
+   * Create a mock DEX offer.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Source account secret key
+   * @param {string} params.sellingAsset - Asset being sold ('XLM' or 'CODE:ISSUER')
+   * @param {string} params.buyingAsset  - Asset being bought ('XLM' or 'CODE:ISSUER')
+   * @param {string} params.amount       - Amount of selling asset
+   * @param {string} params.price        - Price ratio 'n/d' or decimal string
+   * @param {number} [params.offerId=0]  - 0 to create; existing ID to update/cancel
+   * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
+   */
+  async createOffer({ sourceSecret, sellingAsset, buyingAsset, amount, price, offerId = 0 }) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+    this._validateSecretKey(sourceSecret);
+
+    if (!sellingAsset || !buyingAsset) throw new ValidationError('sellingAsset and buyingAsset are required');
+    if (sellingAsset === buyingAsset) throw new ValidationError('sellingAsset and buyingAsset must be different');
+
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum < 0) throw new ValidationError('amount must be a non-negative number');
+
+    const priceNum = typeof price === 'string' && price.includes('/')
+      ? parseInt(price.split('/')[0], 10) / parseInt(price.split('/')[1], 10)
+      : parseFloat(price);
+    if (isNaN(priceNum) || priceNum <= 0) throw new ValidationError('price must be a positive number');
+
+    const sourcePublic = this._secretToPublic(sourceSecret);
+    const wallet = this.wallets.get(sourcePublic);
+    if (!wallet) throw new NotFoundError('Source account not found', ERROR_CODES.WALLET_NOT_FOUND);
+
+    if (!this.offers) this.offers = new Map();
+
+    // Cancel (amount=0) or update existing offer
+    if (offerId !== 0) {
+      const existing = this.offers.get(offerId);
+      if (!existing) throw new NotFoundError(`Offer ${offerId} not found`, ERROR_CODES.NOT_FOUND);
+      if (existing.seller !== sourcePublic) throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Not the offer owner');
+      if (amountNum === 0) {
+        this.offers.delete(offerId);
+      } else {
+        existing.amount = amountNum.toFixed(7);
+        existing.price = priceNum.toFixed(7);
+      }
+      const txId = crypto.randomBytes(32).toString('hex');
+      const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+      return { offerId, transactionId: txId, ledger };
+    }
+
+    // Create new offer
+    const newOfferId = Date.now() * 1000 + (this._offerCounter = ((this._offerCounter || 0) + 1) % 1000);
+    this.offers.set(newOfferId, {
+      id: newOfferId,
+      seller: sourcePublic,
+      sellingAsset,
+      buyingAsset,
+      amount: amountNum.toFixed(7),
+      price: priceNum.toFixed(7),
+      createdAt: new Date().toISOString(),
+    });
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { offerId: newOfferId, transactionId: txId, ledger };
+  }
+
+  /**
+   * Cancel a mock DEX offer.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Source account secret key
+   * @param {string} params.sellingAsset - Asset being sold in the offer
+   * @param {string} params.buyingAsset  - Asset being bought in the offer
+   * @param {number} params.offerId      - ID of the offer to cancel
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async cancelOffer({ sourceSecret, sellingAsset, buyingAsset, offerId }) {
+    const result = await this.createOffer({ sourceSecret, sellingAsset, buyingAsset, amount: '0', price: '1', offerId });
+    return { transactionId: result.transactionId, ledger: result.ledger };
+  }
+
+  /**
+   * Get the mock order book for a trading pair.
+   *
+   * @param {string} sellingAsset - Base asset ('XLM' or 'CODE:ISSUER')
+   * @param {string} buyingAsset  - Counter asset ('XLM' or 'CODE:ISSUER')
+   * @param {number} [limit=20]   - Max entries per side
+   * @returns {Promise<{bids: Array, asks: Array, base: Object, counter: Object}>}
+   */
+  async getOrderBook(sellingAsset, buyingAsset, limit = 20) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    if (!sellingAsset || !buyingAsset) throw new ValidationError('sellingAsset and buyingAsset are required');
+
+    if (!this.offers) this.offers = new Map();
+
+    const asks = Array.from(this.offers.values())
+      .filter(o => o.sellingAsset === sellingAsset && o.buyingAsset === buyingAsset)
+      .slice(0, limit)
+      .map(o => ({ price: o.price, amount: o.amount, price_r: { n: 1, d: 1 } }));
+
+    const bids = Array.from(this.offers.values())
+      .filter(o => o.sellingAsset === buyingAsset && o.buyingAsset === sellingAsset)
+      .slice(0, limit)
+      .map(o => ({ price: o.price, amount: o.amount, price_r: { n: 1, d: 1 } }));
+
+    return {
+      bids,
+      asks,
+      base: { asset_type: sellingAsset === 'XLM' ? 'native' : 'credit_alphanum4', asset_code: sellingAsset },
+      counter: { asset_type: buyingAsset === 'XLM' ? 'native' : 'credit_alphanum4', asset_code: buyingAsset },
     };
   }
 

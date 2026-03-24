@@ -23,6 +23,7 @@ const feesRoutes = require('./fees');
 const featureFlagsAdminRoutes = require('./admin/featureFlags');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
+const offersRoutes = require('./offers');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -117,6 +118,7 @@ app.use('/fees', feesRoutes);
 app.use('/admin/feature-flags', featureFlagsAdminRoutes);
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
+app.use('/offers', offersRoutes);
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
