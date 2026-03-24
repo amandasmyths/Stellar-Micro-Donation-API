@@ -660,6 +660,122 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Create a DEX offer to buy or sell an asset on the Stellar network.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Source account secret key
+   * @param {string} params.sellingAsset - Asset being sold ('XLM' or 'CODE:ISSUER')
+   * @param {string} params.buyingAsset  - Asset being bought ('XLM' or 'CODE:ISSUER')
+   * @param {string} params.amount       - Amount of selling asset to offer
+   * @param {string} params.price        - Price as a ratio string 'n/d' or decimal string
+   * @param {number} [params.offerId=0]  - 0 to create new offer; existing ID to update
+   * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
+   */
+  async createOffer({ sourceSecret, sellingAsset, buyingAsset, amount, price, offerId = 0 }) {
+    return StellarErrorHandler.wrap(async () => {
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const sourceAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForOffer'
+      );
+
+      const parseAsset = (assetStr) => {
+        if (assetStr === 'XLM' || assetStr === 'native') return StellarSdk.Asset.native();
+        const [code, issuer] = assetStr.split(':');
+        if (!issuer) throw new Error(`Invalid asset format: ${assetStr}. Use 'XLM' or 'CODE:ISSUER'`);
+        return new StellarSdk.Asset(code, issuer);
+      };
+
+      const parsePrice = (p) => {
+        if (typeof p === 'string' && p.includes('/')) {
+          const [n, d] = p.split('/');
+          return { n: parseInt(n, 10), d: parseInt(d, 10) };
+        }
+        // Convert decimal to fraction
+        const dec = parseFloat(p);
+        return { n: Math.round(dec * 10000000), d: 10000000 };
+      };
+
+      const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.manageSellOffer({
+          selling: parseAsset(sellingAsset),
+          buying: parseAsset(buyingAsset),
+          amount: amount.toString(),
+          price: parsePrice(price),
+          offerId: offerId.toString(),
+        }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(sourceKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+
+      // Extract offer ID from result
+      let newOfferId = offerId;
+      try {
+        const meta = StellarSdk.xdr.TransactionMeta.fromXDR(result.result_meta_xdr, 'base64');
+        const ops = meta.v2().operations();
+        if (ops && ops[0]) {
+          const inner = ops[0].result().tr().manageSellOfferResult().success().offer();
+          if (inner.switch().name === 'manageSellOfferCreated') {
+            newOfferId = inner.offer().offerID().toNumber();
+          }
+        }
+      } catch (_) { /* offerId stays as provided if XDR parsing fails */ }
+
+      return { offerId: newOfferId, transactionId: result.hash, ledger: result.ledger };
+    }, 'createOffer');
+  }
+
+  /**
+   * Cancel an existing DEX offer.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Source account secret key
+   * @param {string} params.sellingAsset - Asset being sold in the offer
+   * @param {string} params.buyingAsset  - Asset being bought in the offer
+   * @param {number} params.offerId      - ID of the offer to cancel
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async cancelOffer({ sourceSecret, sellingAsset, buyingAsset, offerId }) {
+    return this.createOffer({ sourceSecret, sellingAsset, buyingAsset, amount: '0', price: '1', offerId });
+  }
+
+  /**
+   * Get the order book for a trading pair from Horizon.
+   *
+   * @param {string} sellingAsset - Base asset ('XLM' or 'CODE:ISSUER')
+   * @param {string} buyingAsset  - Counter asset ('XLM' or 'CODE:ISSUER')
+   * @param {number} [limit=20]   - Max number of bids/asks to return
+   * @returns {Promise<{bids: Array, asks: Array, base: Object, counter: Object}>}
+   */
+  async getOrderBook(sellingAsset, buyingAsset, limit = 20) {
+    return StellarErrorHandler.wrap(async () => {
+      const parseAsset = (assetStr) => {
+        if (assetStr === 'XLM' || assetStr === 'native') return StellarSdk.Asset.native();
+        const [code, issuer] = assetStr.split(':');
+        if (!issuer) throw new Error(`Invalid asset format: ${assetStr}. Use 'XLM' or 'CODE:ISSUER'`);
+        return new StellarSdk.Asset(code, issuer);
+      };
+
+      const result = await this._executeWithRetry(
+        () => this.server.orderbook(parseAsset(sellingAsset), parseAsset(buyingAsset)).limit(limit).call(),
+        'getOrderBook'
+      );
+
+      return {
+        bids: result.bids,
+        asks: result.asks,
+        base: result.base,
+        counter: result.counter,
+      };
+    }, 'getOrderBook');
+  }
+
+  /**
    * Claim a claimable balance.
    *
    * @param {Object} params
