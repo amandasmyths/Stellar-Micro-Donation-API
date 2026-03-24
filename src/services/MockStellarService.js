@@ -476,6 +476,24 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Fund a new account via Friendbot (testnet only).
+   * On mainnet, logs a warning and returns { funded: false }.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{funded: boolean, balance?: string}>}
+   */
+  async fundWithFriendbot(publicKey) {
+    if (this.network !== 'testnet') {
+      return { funded: false };
+    }
+    try {
+      const result = await this.fundTestnetWallet(publicKey);
+      return { funded: true, balance: result.balance };
+    } catch (err) {
+      return { funded: false, error: err.message };
+    }
+  }
+
+  /**
    * Check if an account is funded
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}

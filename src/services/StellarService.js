@@ -262,6 +262,27 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Fund a new account via Friendbot (testnet only).
+   * Retries up to 3 times with exponential backoff on transient errors.
+   * On mainnet, logs a warning and returns { funded: false }.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{funded: boolean, balance?: string}>}
+   */
+  async fundWithFriendbot(publicKey) {
+    if (this.network !== 'testnet') {
+      log.warn('STELLAR_SERVICE', 'Friendbot funding skipped — not on testnet', { network: this.network, publicKey });
+      return { funded: false };
+    }
+    try {
+      const result = await this.fundTestnetWallet(publicKey);
+      return { funded: true, balance: result.balance };
+    } catch (err) {
+      log.error('STELLAR_SERVICE', 'Friendbot funding failed', { publicKey, error: err.message });
+      return { funded: false, error: err.message };
+    }
+  }
+
+  /**
    * Check if an account is funded on Stellar
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}

@@ -20,7 +20,7 @@ const WalletService = require('../services/WalletService');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 
-const walletService = new WalletService();
+const walletService = new WalletService(require('../config/serviceContainer').getStellarService());
 const AuditLogService = require('../services/AuditLogService');
 const walletCreateSchema = validateSchema({
   body: {
@@ -83,34 +83,13 @@ const walletPublicKeySchema = validateSchema({
 
 /**
  * POST /wallets
- * Create a new wallet with metadata
+ * Create a new wallet with metadata. Auto-funds via Friendbot on testnet.
  */
 router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res) => {
   try {
     const { address, label, ownerName } = req.body;
 
-    if (!address) {
-      return res.status(400).json({
-        error: 'Missing required field: address'
-      });
-    }
-
-    const existingWallet = Wallet.getByAddress(address);
-    if (existingWallet) {
-      return res.status(409).json({
-        error: 'Wallet with this address already exists'
-      });
-    }
-
-    // Sanitize user-provided metadata
-    const sanitizedLabel = label ? sanitizeLabel(label) : null;
-    const sanitizedOwnerName = ownerName ? sanitizeName(ownerName) : null;
-
-    const wallet = Wallet.create({
-      address,
-      label: sanitizedLabel,
-      ownerName: sanitizedOwnerName
-    });
+    const wallet = await walletService.createWallet({ address, label, ownerName });
 
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.WALLET_OPERATION,
@@ -121,7 +100,7 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema
       requestId: req.id,
       ipAddress: req.ip,
       resource: `/wallets/${wallet.id}`,
-      details: { address, label: sanitizedLabel, ownerName: sanitizedOwnerName }
+      details: { address, funded: wallet.funded }
     });
 
     res.status(201).json({
