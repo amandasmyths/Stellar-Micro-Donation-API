@@ -81,6 +81,12 @@ const createDonationSchema = validateSchema({
         maxLength: 255,
         nullable: true,
       },
+      memoType: {
+        type: 'string',
+        required: false,
+        nullable: true,
+        enum: ['text', 'hash', 'id', 'return'],
+      },
     },
   },
 });
@@ -335,6 +341,7 @@ router.post('/batch', batchRateLimiter, requireApiKey, async (req, res, next) =>
  */
 router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
+    const { amount, donor, recipient, memo, memoType } = req.body;
     const { amount, currency, donor, recipient, memo } = req.body;
 
     // Basic validation
@@ -355,6 +362,18 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
       });
     }
 
+    // Validate memo type + value combination
+    if (memo || memoType) {
+      const memoValidator = require('../utils/memoValidator');
+      const memoValidation = memoValidator.validateWithType(memo || '', memoType || 'text');
+      if (!memoValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: { code: memoValidation.code, message: memoValidation.error }
+        });
+      }
+    }
+
     // Resolve federation address if needed (e.g. alice*example.com → GABC...)
     let resolvedRecipient = recipient;
     if (federation.isFederationAddress(recipient)) {
@@ -368,6 +387,7 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
       donor,
       recipient: resolvedRecipient,
       memo,
+      memoType: memoType || 'text',
       idempotencyKey: req.idempotency.key
     });
 
@@ -530,6 +550,54 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), recentDonatio
 });
 
 /**
+ * GET /donations/:id/receipt
+ * Generate and return a PDF receipt for a confirmed donation.
+ */
+router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, async (req, res, next) => {
+  try {
+    const ReceiptService = require('../services/ReceiptService');
+    const transaction = donationService.getDonationById(req.params.id);
+
+    const pdf = await ReceiptService.generatePDF(transaction);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="receipt-${transaction.id}.pdf"`,
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /donations/:id/receipt/email
+ * Send a PDF receipt to the provided email address.
+ * Body: { email: string }
+ */
+router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, async (req, res, next) => {
+  try {
+    const ReceiptService = require('../services/ReceiptService');
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, error: { message: 'email is required' } });
+    }
+
+    const transaction = donationService.getDonationById(req.params.id);
+    const result = await ReceiptService.sendEmail({ transaction, toEmail: email });
+
+    res.json({ success: true, data: { messageId: result.messageId } });
+  } catch (error) {
+    if (error.status === 400) {
+      return res.status(400).json({ success: false, error: { message: error.message } });
+    }
+    next(error);
+  }
+});
+
+/**
  * GET /donations/:id
  * Get a specific donation
  */
@@ -580,6 +648,59 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
       data: updatedTransaction
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /donations/:id/refund
+ * Initiate a refund for a confirmed donation
+ * Requires admin or refund permission
+ */
+router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    log.debug('DONATION_ROUTE', 'Processing refund request', {
+      requestId: req.id,
+      donationId: id,
+      reason
+    });
+
+    // Validate donation ID
+    if (!id || isNaN(parseInt(id, 10))) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Invalid donation ID'
+        }
+      });
+    }
+
+    // Process refund
+    const refundResult = await donationService.refundDonation(id, {
+      reason: reason || null,
+      requestId: req.id
+    });
+
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: refundResult
+    });
+  } catch (error) {
+    log.error('DONATION_ROUTE', 'Failed to process refund', {
+      requestId: req.id,
+      error: error.message,
+      stack: error.stack
+    });
+
     next(error);
   }
 });

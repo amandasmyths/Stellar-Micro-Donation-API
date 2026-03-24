@@ -20,6 +20,8 @@ const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
 const feesRoutes = require('./fees');
 const featureFlagsAdminRoutes = require('./admin/featureFlags');
+const networkRoutes = require('./network');
+const webhooksRoutes = require('./webhooks');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -28,6 +30,7 @@ const replayDetectionMiddleware = require('../middleware/replayDetection');
 const Database = require('../utils/database');
 const HealthCheckService = require('../services/HealthCheckService');
 const { initializeApiKeysTable } = require('../models/apiKeys');
+const WebhookService = require('../services/WebhookService');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
@@ -48,6 +51,7 @@ const app = express();
 const stellarService = serviceContainer.getStellarService();
 const reconciliationService = serviceContainer.getTransactionReconciliationService();
 const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
+const networkStatusService = serviceContainer.getNetworkStatusService();
 
 // Initialize replay detection cleanup timer (will be started in startServer)
 let replayCleanupTimer = null;
@@ -90,6 +94,8 @@ app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
 app.use('/fees', feesRoutes);
 app.use('/admin/feature-flags', featureFlagsAdminRoutes);
+app.use('/network', networkRoutes);
+app.use('/webhooks', webhooksRoutes);
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
@@ -124,7 +130,7 @@ app.get('/exchange-rates', async (req, res) => {
 // Health check endpoint
 // Health check endpoints
 app.get('/health', async (req, res) => {
-  const health = await HealthCheckService.getFullHealth(stellarService);
+  const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
   const httpStatus = health.status === 'unhealthy' ? 503 : 200;
   return res.status(httpStatus).json(health);
 });
@@ -136,7 +142,7 @@ app.get('/health/live', (req, res) => {
 
 // Readiness probe — returns 200 only when all dependencies are healthy
 app.get('/health/ready', async (req, res) => {
-  const readiness = await HealthCheckService.getReadiness(stellarService);
+  const readiness = await HealthCheckService.getReadiness(stellarService, networkStatusService);
   const httpStatus = readiness.ready ? 200 : 503;
   return res.status(httpStatus).json(readiness);
 });
@@ -341,12 +347,22 @@ async function startServer() {
       await loadFlagsFromEnv(process.env.FEATURE_FLAGS);
     }
     
+    await WebhookService.initTable();
     await validateRBAC();
 
-    const server = app.listen(PORT, () => {
+    const server = app.listen(PORT, async () => {
       recurringDonationScheduler.start();
       reconciliationService.start();
       auditLogRetentionService.start();
+      
+      // Initialize and start network status monitoring
+      try {
+        await networkStatusService.initialize();
+      } catch (err) {
+        log.error('APP', 'Failed to initialize NetworkStatusService', {
+          error: err.message,
+        });
+      }
 
       const { startCleanup } = require('../utils/replayDetector');
       const replayConfig = require('../config/replayDetection');
@@ -377,6 +393,15 @@ async function startServer() {
         recurringDonationScheduler.stop();
         reconciliationService.stop();
         auditLogRetentionService.stop();
+        
+        // Shutdown network status service
+        try {
+          await networkStatusService.shutdown();
+        } catch (err) {
+          log.error("SHUTDOWN", "Error shutting down NetworkStatusService", {
+            error: err.message,
+          });
+        }
 
         if (replayCleanupTimer) {
           clearInterval(replayCleanupTimer);
