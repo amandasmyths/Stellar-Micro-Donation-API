@@ -220,4 +220,39 @@ describe('Request Deduplication Middleware', () => {
       expect(callCount).toBe(2);
     });
   });
+
+  describe('error resilience', () => {
+    test('middleware continues if fingerprint computation throws', async () => {
+      const app = express();
+      app.use(express.json());
+      // Insert middleware that makes body non-serializable BEFORE dedup
+      app.use((req, res, next) => {
+        const circular = {};
+        circular.self = circular;
+        req.body = circular;
+        next();
+      });
+      app.use(createDeduplicationMiddleware());
+      app.post('/test', (req, res) => {
+        res.status(201).json({ success: true });
+      });
+
+      const res = await request(app).post('/test').send({ amount: 10 });
+      expect(res.status).toBe(201);
+    });
+
+    test('middleware continues if Cache.set throws', async () => {
+      const Cache = require('../src/utils/cache');
+      const originalSet = Cache.set;
+      Cache.set = () => { throw new Error('cache failure'); };
+
+      const app = buildTestApp();
+      const res = await request(app).post('/test').send({ amount: 99 });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({ success: true, data: { id: 1 } });
+
+      Cache.set = originalSet;
+    });
+  });
 });
