@@ -49,6 +49,11 @@ class StellarServiceInterface {
     throw new Error('buildAndSubmitFeeBumpTransaction() must be implemented');
   }
 
+  isValidAddress(address) {
+    void address;
+    throw new Error('isValidAddress() must be implemented');
+  }
+
   async discoverBestPath(_params) {
     void _params;
     throw new Error('discoverBestPath() must be implemented');
@@ -90,6 +95,19 @@ class StellarServiceInterface {
   async estimateFee(_operationCount = 1) {
     void _operationCount;
     throw new Error('estimateFee() must be implemented');
+  }
+
+  async setAccountData(_secret, _key, _value) {
+    void _secret;
+    void _key;
+    void _value;
+    throw new Error('setAccountData() must be implemented');
+  }
+
+  async deleteAccountData(_secret, _key) {
+    void _secret;
+    void _key;
+    throw new Error('deleteAccountData() must be implemented');
   }
 }
 
