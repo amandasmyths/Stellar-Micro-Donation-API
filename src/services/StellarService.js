@@ -1125,6 +1125,101 @@ class StellarService extends StellarServiceInterface {
     }, 'claimBalance');
   }
 
+  // ─── Trustline Sponsorship ───────────────────────────────────────────────────
+
+  /**
+   * Add a sponsored trustline for an asset to the user's account.
+   *
+   * @param {string} sponsorSecret - Secret key of the sponsoring account
+   * @param {string} userSecret - Secret key of the user adding the trustline
+   * @param {string} assetCode - Asset Code (e.g. 'USDC')
+   * @param {string} assetIssuer - Asset Issuer Public Key
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async addSponsoredTrustline(sponsorSecret, userSecret, assetCode, assetIssuer) {
+    return StellarErrorHandler.wrap(async () => {
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const userKeypair = StellarSdk.Keypair.fromSecret(userSecret);
+      const asset = new StellarSdk.Asset(assetCode, assetIssuer);
+
+      const sponsorAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sponsorKeypair.publicKey()),
+        'loadSponsorAccountForTrustline'
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(sponsorAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.beginSponsoringFutureReserves({
+          sponsoredId: userKeypair.publicKey(),
+        }))
+        .addOperation(StellarSdk.Operation.changeTrust({
+          asset: asset,
+          source: userKeypair.publicKey(),
+        }))
+        .addOperation(StellarSdk.Operation.endSponsoringFutureReserves({
+          source: userKeypair.publicKey(),
+        }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(sponsorKeypair);
+      tx.sign(userKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      return { transactionId: result.hash, ledger: result.ledger };
+    }, 'addSponsoredTrustline');
+  }
+
+  /**
+   * Safe revocation of trustline sponsorship.
+   * Ensures the user has enough native balance before revoking.
+   *
+   * @param {string} sponsorSecret - Secret key of the sponsoring account
+   * @param {string} userPublicKey - Public key of the user account
+   * @param {string} assetCode - Asset Code
+   * @param {string} assetIssuer - Asset Issuer Public Key
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   */
+  async revokeTrustlineSponsorship(sponsorSecret, userPublicKey, assetCode, assetIssuer) {
+    return StellarErrorHandler.wrap(async () => {
+      const userAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(userPublicKey),
+        'loadUserForRevocationCheck'
+      );
+
+      const nativeBalanceStr = userAccount.balances.find(b => b.asset_type === 'native')?.balance || '0';
+      const availableBalance = parseFloat(nativeBalanceStr);
+      
+      // Ensures the user has at least 0.5 available to absorb the reserve
+      if (availableBalance < 0.5) {
+        throw new Error("Insufficient balance to take over trustline reserve.");
+      }
+
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const sponsorAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sponsorKeypair.publicKey()),
+        'loadSponsorForTrustlineRevoke'
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(sponsorAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.revokeTrustlineSponsorship({
+          account: userPublicKey,
+          asset: new StellarSdk.Asset(assetCode, assetIssuer),
+        }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(sponsorKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      return { transactionId: result.hash, ledger: result.ledger, revoked: true };
+    }, 'revokeTrustlineSponsorship');
+  }
+
   // ─── Soroban Contract Methods ────────────────────────────────────────────────
 
   /**
