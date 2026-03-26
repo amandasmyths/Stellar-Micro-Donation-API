@@ -136,7 +136,9 @@ class StatsService {
   }
 
   /**
-   * Get stats by donor
+   * Get stats by donor.
+   * Anonymous donations are excluded so that pseudonymous IDs do not pollute
+   * public donor rankings or leaderboards.
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
    * @returns {Array} Array of donor stats sorted by total volume
@@ -145,7 +147,8 @@ class StatsService {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const donorMap = new Map();
 
-    transactions.forEach(tx => {
+    // Exclude anonymous donations from public donor stats / leaderboards
+    transactions.filter(tx => !tx.anonymous).forEach(tx => {
       const donor = tx.donor || 'Anonymous';
       
       if (!donorMap.has(donor)) {
@@ -208,6 +211,39 @@ class StatsService {
 
     return Array.from(recipientMap.values()).sort((a, b) => 
       b.totalReceived - a.totalReceived
+    );
+  }
+
+  /**
+   * Get stats by tag
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Array} Array of tag stats sorted by total donated
+   */
+  static getTagStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    const tagMap = new Map();
+
+    transactions.forEach(tx => {
+      if (!tx.tags || !Array.isArray(tx.tags)) return;
+      
+      tx.tags.forEach(tag => {
+        if (!tagMap.has(tag)) {
+          tagMap.set(tag, {
+            tag,
+            totalDonated: 0,
+            donationCount: 0
+          });
+        }
+        
+        const tagStats = tagMap.get(tag);
+        tagStats.totalDonated += parseFloat(tx.amount) || 0;
+        tagStats.donationCount += 1;
+      });
+    });
+
+    return Array.from(tagMap.values()).sort((a, b) => 
+      b.totalDonated - a.totalDonated
     );
   }
 
@@ -642,6 +678,7 @@ StatsService.getDashboardData = function getDashboardData({ period = '30d', gran
 
   const donorMap = new Map();
   for (const tx of transactions) {
+    if (tx.anonymous) continue; // exclude anonymous donations from public leaderboard
     const key = tx.donor || 'anonymous';
     if (!donorMap.has(key)) donorMap.set(key, { address: key, totalAmount: 0, count: 0 });
     const d = donorMap.get(key);

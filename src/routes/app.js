@@ -19,12 +19,25 @@ const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
+const recurringDonationRoutes = require('./recurringDonation');
 const feesRoutes = require('./fees');
 const featureFlagsAdminRoutes = require('./admin/featureFlags');
+const createFeeBumpRouter = require('./admin/feeBump');
+const dbAdminRoutes = require('./admin/db');
 const retentionAdminRoutes = require('./admin/retention');
+const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
+const campaignsRoutes = require('./campaigns');
 const offersRoutes = require('./offers');
+const tagsRoutes = require('./tags');
+const { metricsMiddleware, registry } = require('../utils/metrics');
+const requireApiKey = require('../middleware/apiKey');
+const { requireAdmin } = require('../middleware/rbac');
+const authRoutes = require('./auth');
+const exportsRoutes = require('./exports');
+const channelsRoutes = require('./channels');
+const { createGraphQLRouter, attachSubscriptionServer } = require('../graphql');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -38,9 +51,10 @@ const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 const serviceContainer = require('../config/serviceContainer');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
+const { createDeduplicationMiddleware } = require('../middleware/deduplication');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -48,6 +62,7 @@ const {
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const AuditLogService = require('../services/AuditLogService');
 const auditLogRetentionService = require('../services/AuditLogRetentionService');
+const { runCleanup } = require('../jobs/cleanupJob');
 
 const app = express();
 
@@ -59,6 +74,35 @@ const networkStatusService = serviceContainer.getNetworkStatusService();
 
 // Initialize replay detection cleanup timer (will be started in startServer)
 let replayCleanupTimer = null;
+
+// Graceful shutdown state
+let isShuttingDown = false;
+let inFlightRequests = 0;
+
+// In-flight request tracking and graceful shutdown rejection middleware
+app.use((req, res, next) => {
+  if (isShuttingDown) {
+    if (req.path.startsWith('/health')) return next();
+    res.set('Connection', 'close');
+    return res.status(503).json({
+      success: false,
+      error: { code: 'SERVICE_UNAVAILABLE', message: 'Server is shutting down' }
+    });
+  }
+  
+  inFlightRequests++;
+  let handled = false;
+  const decrement = () => {
+    if (!handled) {
+      handled = true;
+      inFlightRequests--;
+    }
+  };
+  
+  res.on('finish', decrement);
+  res.on('close', decrement);
+  next();
+});
 
 // Middleware
 app.use(requestId);
@@ -111,19 +155,46 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
 
+// Prometheus request duration instrumentation
+app.use(metricsMiddleware);
+
+// GET /metrics — Prometheus scrape endpoint (admin only)
+app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
+  res.set('Content-Type', registry.contentType);
+  res.end(await registry.metrics());
+});
+// Content-based request deduplication (for requests without idempotency keys)
+app.use(createDeduplicationMiddleware());
+
 // Routes
 app.use('/wallets', walletRoutes);
 app.use('/donations', donationRoutes);
+app.use('/donations/recurring', recurringDonationRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
 app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
 app.use('/fees', feesRoutes);
 app.use('/admin/feature-flags', featureFlagsAdminRoutes);
+app.use('/admin/db', dbAdminRoutes);
 app.use('/admin/retention', retentionAdminRoutes);
+app.use('/admin/matching-programs', matchingProgramsAdminRoutes);
+
+// Fee bump admin route — lazy access to serviceContainer
+app.use('/admin/transactions', (req, res, next) => {
+  const serviceContainer = require('../config/serviceContainer');
+  const feeBumpRouter = createFeeBumpRouter(serviceContainer.getFeeBumpService());
+  feeBumpRouter(req, res, next);
+});
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
+app.use('/campaigns', campaignsRoutes);
 app.use('/offers', offersRoutes);
+app.use('/tags', tagsRoutes);
+app.use('/auth', authRoutes);
+app.use('/exports', exportsRoutes);
+app.use('/channels', channelsRoutes);
+app.use('/graphql', createGraphQLRouter());
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
@@ -152,6 +223,10 @@ app.get('/exchange-rates', async (req, res) => {
 // Health check endpoints
 app.get('/health', async (req, res) => {
   const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
+  const stellarConfig = require('../config/stellar');
+  health.stellarEnvironment = stellarConfig.environment || 'testnet';
+  health.stellarNetwork = stellarConfig.network || 'testnet';
+  
   const httpStatus = health.status === 'unhealthy' ? 503 : 200;
   return res.status(httpStatus).json(health);
 });
@@ -372,9 +447,15 @@ async function startServer() {
     await validateRBAC();
 
     const server = app.listen(PORT, async () => {
+      // Attach GraphQL WebSocket subscription server
+      attachSubscriptionServer(server);
+
       recurringDonationScheduler.start();
       reconciliationService.start();
       auditLogRetentionService.start();
+
+      runCleanup(); // Run once on startup
+    const cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
       
       // Initialize and start network status monitoring
       try {
@@ -407,38 +488,54 @@ async function startServer() {
     });
 
     const gracefulShutdown = async (signal) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      log.info("SHUTDOWN", `Received ${signal}, starting graceful shutdown`);
       logShutdownDiagnostics(signal);
 
-      server.close(async () => {
-        log.info("SHUTDOWN", "HTTP server closed");
-        recurringDonationScheduler.stop();
-        reconciliationService.stop();
-        auditLogRetentionService.stop();
-        
-        // Shutdown network status service
-        try {
-          await networkStatusService.shutdown();
-        } catch (err) {
-          log.error("SHUTDOWN", "Error shutting down NetworkStatusService", {
-            error: err.message,
-          });
-        }
+      clearInterval(cleanupInterval); // Stop the timer so the process can exit
 
-        if (replayCleanupTimer) {
-          clearInterval(replayCleanupTimer);
-          log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
-        }
-
-        await Database.close();
-        log.info("SHUTDOWN", "Database pool closed");
-
-        process.exit(0);
-      });
-
-      setTimeout(() => {
-        log.error("SHUTDOWN", "Forced shutdown after timeout");
+      const timeoutMs = parseInt(process.env.SHUTDOWN_TIMEOUT || '30000', 10);
+      const forceExit = setTimeout(() => {
+        log.error("SHUTDOWN", `Forced shutdown after ${timeoutMs}ms timeout`);
         process.exit(1);
-      }, 10000);
+      }, timeoutMs);
+
+      server.close(async () => {
+        log.info("SHUTDOWN", "HTTP server closed to new connections");
+
+        const waitInterval = setInterval(async () => {
+          if (inFlightRequests > 0) {
+            log.info("SHUTDOWN", `Waiting for ${inFlightRequests} in-flight requests to complete...`);
+            return;
+          }
+          
+          clearInterval(waitInterval);
+          clearTimeout(forceExit);
+          log.info("SHUTDOWN", "All in-flight requests completed.");
+
+          recurringDonationScheduler.stop();
+          reconciliationService.stop();
+          auditLogRetentionService.stop();
+          
+          try {
+            await networkStatusService.shutdown();
+          } catch (err) {
+            log.error("SHUTDOWN", "Error shutting down NetworkStatusService", { error: err.message });
+          }
+
+          if (replayCleanupTimer) {
+            clearInterval(replayCleanupTimer);
+            log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
+          }
+
+          await Database.close();
+          log.info("SHUTDOWN", "Database pool closed");
+
+          log.info("SHUTDOWN", "Graceful shutdown complete.");
+          process.exit(0);
+        }, 500);
+      });
     };
 
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
