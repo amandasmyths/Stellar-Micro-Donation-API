@@ -1990,6 +1990,18 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Set or update an account data entry (mock implementation)
+   * @param {string} secret - Secret key of the account
+   * @param {string} key - Data entry key
+   * @param {string} value - Data entry value
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setAccountData(secret, key, value) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    const publicKey = this._secretToPublic(secret);
    * Load a mock account object for the given public key.
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{id: string, sequence: string, balances: Array}>}
@@ -2003,6 +2015,32 @@ class MockStellarService extends StellarServiceInterface {
         ERROR_CODES.WALLET_NOT_FOUND
       );
     }
+
+    // Initialize data_attr if it doesn't exist
+    if (!wallet.data_attr) {
+      wallet.data_attr = {};
+    }
+
+    // Store the value (base64-encoded to simulate Stellar's binary storage)
+    wallet.data_attr[key] = Buffer.from(value).toString('base64');
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { hash: txId, ledger };
+  }
+
+  /**
+   * Delete an account data entry by setting its value to null
+   * @param {string} secret - Secret key of the account
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async deleteAccountData(secret, key) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    const publicKey = this._secretToPublic(secret);
     return {
       id: publicKey,
       sequence: wallet.sequence,
@@ -2105,6 +2143,18 @@ class MockStellarService extends StellarServiceInterface {
         ERROR_CODES.WALLET_NOT_FOUND
       );
     }
+
+    // Initialize data_attr if it doesn't exist
+    if (!wallet.data_attr) {
+      wallet.data_attr = {};
+    }
+
+    // Delete the key
+    delete wallet.data_attr[key];
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { hash: txId, ledger };
     const balances = [{ asset_type: 'native', asset_code: 'XLM', balance: wallet.balance }];
     if (wallet.assetBalances) {
       for (const [key, balance] of Object.entries(wallet.assetBalances)) {
