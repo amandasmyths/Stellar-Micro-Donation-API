@@ -3,10 +3,11 @@
  * 
  * RESPONSIBILITY: HTTP request handling for API key management operations
  * OWNER: Security Team
- * DEPENDENCIES: API Keys model, middleware (auth, RBAC), validation helpers
+ * DEPENDENCIES: API Keys model, middleware (auth, RBAC), validation helpers, scope validator
  * 
  * Admin-only endpoints for API key lifecycle management including creation, listing,
- * rotation, deprecation, and revocation. Supports zero-downtime key rotation.
+ * rotation, deprecation, and revocation. Supports zero-downtime key rotation and
+ * fine-grained scope-based access control.
  */
 
 const express = require('express');
@@ -15,8 +16,10 @@ const apiKeysModel = require('../models/apiKeys');
 const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError } = require('../utils/errors');
 const { validateNonEmptyString, validateRole, validateInteger } = require('../utils/validationHelpers');
+const { validateScopes } = require('../utils/scopeValidator');
 
 const AuditLogService = require('../services/AuditLogService');
+const TOTPService = require('../services/TOTPService');
 
 const { validateSchema } = require('../middleware/schemaValidation');
 const { API_KEY_STATUS } = require('../constants');
@@ -30,6 +33,7 @@ const apiKeyCreateSchema = validateSchema({
       metadata: { type: 'object', required: false, nullable: true },
       rateLimit: { type: 'integer', required: false, min: 1 },
       rateLimitWindowSeconds: { type: 'integer', required: false, min: 1 },
+      allowedIps: { type: 'array', required: false, nullable: true },
     },
   },
 });
@@ -63,10 +67,11 @@ const apiKeyCleanupSchema = validateSchema({
 /**
  * POST /api/v1/api-keys
  * Create a new API key (admin only)
+ * Request body can include optional 'scopes' array for fine-grained access control
  */
 router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
   try {
-    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds } = req.body;
+    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds, allowedIps } = req.body;
 
     const nameValidation = validateNonEmptyString(name, 'Name');
     if (!nameValidation.valid) {
@@ -85,6 +90,12 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
       }
     }
 
+    // Validate scopes
+    const scopeValidation = validateScopes(scopes);
+    if (!scopeValidation.valid) {
+      throw new ValidationError(`Invalid scopes: ${scopeValidation.errors.join('; ')}`);
+    }
+
     const keyInfo = await apiKeysModel.createApiKey({
       name: name.trim(),
       role,
@@ -93,6 +104,7 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
       metadata: metadata || {},
       rateLimit: rateLimit || null,
       rateLimitWindowSeconds: rateLimitWindowSeconds || null,
+      allowedIps: allowedIps || null,
     });
 
     // Audit log: API key created
@@ -109,6 +121,8 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
         keyId: keyInfo.id,
         keyName: name.trim(),
         role,
+        scopesCount: scopeValidation.scopes.length,
+        scopes: scopeValidation.scopes,
         expiresInDays,
         createdBy: req.user.id
       }
@@ -122,6 +136,7 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
         keyPrefix: keyInfo.keyPrefix,
         name: keyInfo.name,
         role: keyInfo.role,
+        scopes: keyInfo.scopes,
         status: keyInfo.status,
         createdAt: keyInfo.createdAt,
         expiresAt: keyInfo.expiresAt,
@@ -291,6 +306,47 @@ router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, async (req, r
 });
 
 /**
+ * PATCH /api/v1/api-keys/:id
+ * Update mutable fields on an API key, e.g. allowedIps (admin only)
+ */
+router.patch('/:id', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const keyIdValidation = validateInteger(req.params.id, { min: 1 });
+    if (!keyIdValidation.valid) {
+      throw new ValidationError(`Invalid key ID: ${keyIdValidation.error}`);
+    }
+
+    const { allowedIps } = req.body;
+    const updates = {};
+    if (allowedIps !== undefined) updates.allowed_ips = allowedIps;
+
+    const updated = await apiKeysModel.updateApiKey(keyIdValidation.value, updates);
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'API key not found' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'API_KEY_UPDATED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyIdValidation.value}`,
+      details: { keyId: keyIdValidation.value, updatedFields: Object.keys(updates), updatedBy: req.user.id },
+    });
+
+    res.json({ success: true, message: 'API key updated successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * DELETE /api/v1/api-keys/:id
  * Revoke an API key (admin only)
  */
@@ -372,6 +428,164 @@ router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, async (req, res, ne
         retentionDays
       }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─── TOTP Routes ──────────────────────────────────────────────────────────────
+
+/**
+ * POST /api-keys/:id/totp/setup
+ * Generate a TOTP secret and QR code for an API key (admin only).
+ * TOTP is not yet active — the admin must call /verify to activate it.
+ */
+router.post('/:id/totp/setup', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+
+    // Fetch key name for the otpauth label
+    const { initializeApiKeysTable } = require('../models/apiKeys');
+    await initializeApiKeysTable();
+    const db = require('../utils/database');
+    const row = await db.get(`SELECT name FROM api_keys WHERE id = ?`, [keyId]);
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'API key not found' },
+      });
+    }
+
+    const result = await TOTPService.generateSecret(keyId, row.name);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_SETUP_INITIATED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp/setup`,
+      details: { keyId, initiatedBy: req.user.id },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        secret: result.secret,
+        qrCodeDataUrl: result.qrCodeDataUrl,
+        otpauthUrl: result.otpauthUrl,
+        backupCodes: result.backupCodes,
+        warning: 'Store backup codes securely. They will not be shown again.',
+        instructions: 'Scan the QR code with your authenticator app, then call POST /totp/verify with a valid code to activate TOTP.',
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api-keys/:id/totp/verify
+ * Verify a TOTP code and activate TOTP for the API key (admin only).
+ * Also accepts a backup code to authenticate when TOTP is already enabled.
+ */
+router.post('/:id/totp/verify', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'code is required' },
+      });
+    }
+
+    // If TOTP is already enabled, this endpoint just verifies the code
+    const alreadyEnabled = await TOTPService.isTotpEnabled(keyId);
+    if (alreadyEnabled) {
+      const totpValid = await TOTPService.verify(keyId, String(code));
+      const backupValid = !totpValid && await TOTPService.verifyBackupCode(keyId, String(code));
+      const valid = totpValid || backupValid;
+
+      res.setHeader('X-TOTP-Required', 'true');
+      if (!valid) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'INVALID_TOTP', message: 'Invalid or expired TOTP code' },
+        });
+      }
+      return res.status(200).json({ success: true, data: { verified: true, usedBackupCode: backupValid } });
+    }
+
+    // First-time activation
+    const result = await TOTPService.enable(keyId, String(code));
+    if (!result.enabled) {
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
+        success: false,
+        error: { code: 'INVALID_TOTP', message: result.reason || 'Invalid TOTP code' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_ENABLED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp/verify`,
+      details: { keyId, enabledBy: req.user.id },
+    });
+
+    res.status(200).json({ success: true, data: { enabled: true } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api-keys/:id/totp
+ * Disable TOTP for an API key (admin only). Requires a valid TOTP or backup code.
+ */
+router.delete('/:id/totp', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'code is required to disable TOTP' },
+      });
+    }
+
+    const result = await TOTPService.disable(keyId, String(code));
+    if (!result.disabled) {
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
+        success: false,
+        error: { code: 'INVALID_TOTP', message: result.reason || 'Invalid code' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_DISABLED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp`,
+      details: { keyId, disabledBy: req.user.id },
+    });
+
+    res.status(200).json({ success: true, data: { disabled: true } });
   } catch (error) {
     next(error);
   }

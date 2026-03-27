@@ -16,6 +16,13 @@ const TransactionReconciliationService = require('../services/TransactionReconci
 const IdempotencyService = require('../services/IdempotencyService');
 const TransactionSyncService = require('../services/TransactionSyncService');
 const NetworkStatusService = require('../services/NetworkStatusService');
+const FeeBumpService = require('../services/FeeBumpService');
+const AuditLogService = require('../services/AuditLogService');
+const RecipientPoolRepository = require('../services/RecipientPoolRepository');
+const RoundRobinStateRepository = require('../services/RoundRobinStateRepository');
+const RoutingDecisionRepository = require('../services/RoutingDecisionRepository');
+const DonationTotalsRepository = require('../services/DonationTotalsRepository');
+const DonationRouter = require('../services/DonationRouter');
 
 class ServiceContainer {
   constructor(config = {}) {
@@ -38,12 +45,32 @@ class ServiceContainer {
       this.stellarService
     );
 
+    this.feeBumpService = new FeeBumpService(
+      this.stellarService,
+      AuditLogService,
+      { feeSourceSecret: config.stellar?.serviceSecretKey }
+    );
+
+    this.transactionReconciliationService.setFeeBumpService(this.feeBumpService);
+
     this.transactionSyncService = new TransactionSyncService(
       this.stellarService
     );
 
     // Initialize Network Status Service
     this.networkStatusService = new NetworkStatusService(this.stellarService);
+
+    // Initialize routing repositories and DonationRouter
+    this.recipientPoolRepo = new RecipientPoolRepository();
+    this.roundRobinStateRepo = new RoundRobinStateRepository();
+    this.routingDecisionRepo = new RoutingDecisionRepository();
+    this.donationTotalsRepo = new DonationTotalsRepository();
+    this.donationRouter = new DonationRouter({
+      recipientPoolRepo: this.recipientPoolRepo,
+      routingDecisionRepo: this.routingDecisionRepo,
+      roundRobinStateRepo: this.roundRobinStateRepo,
+      donationTotalsRepo: this.donationTotalsRepo,
+    });
   }
 
   getStellarService() {
@@ -69,6 +96,30 @@ class ServiceContainer {
   getNetworkStatusService() {
     return this.networkStatusService;
   }
+
+  getFeeBumpService() {
+    return this.feeBumpService;
+  }
+
+  getRecipientPoolRepo() {
+    return this.recipientPoolRepo;
+  }
+
+  getRoundRobinStateRepo() {
+    return this.roundRobinStateRepo;
+  }
+
+  getRoutingDecisionRepo() {
+    return this.routingDecisionRepo;
+  }
+
+  getDonationTotalsRepo() {
+    return this.donationTotalsRepo;
+  }
+
+  getDonationRouter() {
+    return this.donationRouter;
+  }
 }
 
 const appConfig = require('./index');
@@ -79,7 +130,10 @@ function getInstance() {
   if (!_instance) {
     _instance = new ServiceContainer({
       useMockStellar: appConfig.stellar.mockEnabled,
-      stellar: appConfig.stellar
+      stellar: {
+        ...appConfig.stellar,
+        serviceSecretKey: appConfig.stellar.serviceSecretKey || process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
+      },
     });
   }
   return _instance;

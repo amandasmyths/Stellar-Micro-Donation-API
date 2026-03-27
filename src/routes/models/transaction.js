@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 const donationEvents = require('../../events/donationEvents');
 const {
   TRANSACTION_STATES,
@@ -9,7 +10,6 @@ const {
 } = require('../../utils/transactionStateMachine');
 
 class Transaction {
-  static eventEmitter = donationEvents;
   static getDbPath() {
     return process.env.DB_JSON_PATH || path.join(__dirname, '../../../data/donations.json');
   }
@@ -67,12 +67,15 @@ class Transaction {
     const nowIso = new Date().toISOString();
     const newTransaction = {
       ...transactionData,
-      id: transactionData.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: transactionData.id || uuidv4(),
       amount: transactionData.amount,
       donor: transactionData.donor,
       recipient: transactionData.recipient,
       memo: transactionData.memo || '',
       memoType: transactionData.memoType || 'text',
+      memoHash: transactionData.memoHash || null,
+      encryptionMetadata: transactionData.encryptionMetadata || null,
+      memoEnvelope: transactionData.memoEnvelope || null,
       notes: transactionData.notes || null,
       tags: transactionData.tags || [],
       apiKeyId: transactionData.apiKeyId || null,
@@ -81,6 +84,11 @@ class Transaction {
       stellarTxId: transactionData.stellarTxId || null,
       stellarLedger: transactionData.stellarLedger || null,
       statusUpdatedAt: transactionData.statusUpdatedAt || nowIso,
+      envelopeXdr: transactionData.envelopeXdr || null,
+      feeBumpCount: transactionData.feeBumpCount || 0,
+      originalFee: transactionData.originalFee || null,
+      currentFee: transactionData.currentFee || null,
+      lastFeeBumpAt: transactionData.lastFeeBumpAt || null,
     };
     transactions.push(newTransaction);
     this.saveTransactions(transactions);
@@ -168,6 +176,45 @@ class Transaction {
     return transactions[index];
   }
 
+  /**
+   * Update fee bump metadata for a transaction.
+   * @param {string} id - Transaction ID
+   * @param {Object} feeBumpData - Fee bump data to update
+   * @param {number} [feeBumpData.feeBumpCount] - New fee bump count
+   * @param {number} [feeBumpData.currentFee] - New current fee in stroops
+   * @param {string} [feeBumpData.lastFeeBumpAt] - ISO timestamp of fee bump
+   * @param {string} [feeBumpData.envelopeXdr] - Updated envelope XDR (fee bump envelope)
+   * @param {string} [feeBumpData.stellarTxId] - New Stellar transaction hash
+   * @returns {Object} Updated transaction
+   */
+  static updateFeeBumpData(id, feeBumpData) {
+    const transactions = this.loadTransactions();
+    const index = transactions.findIndex(t => t.id === id);
+
+    if (index === -1) {
+      throw new Error(`Transaction not found: ${id}`);
+    }
+
+    if (feeBumpData.feeBumpCount !== undefined) {
+      transactions[index].feeBumpCount = feeBumpData.feeBumpCount;
+    }
+    if (feeBumpData.currentFee !== undefined) {
+      transactions[index].currentFee = feeBumpData.currentFee;
+    }
+    if (feeBumpData.lastFeeBumpAt !== undefined) {
+      transactions[index].lastFeeBumpAt = feeBumpData.lastFeeBumpAt;
+    }
+    if (feeBumpData.envelopeXdr !== undefined) {
+      transactions[index].envelopeXdr = feeBumpData.envelopeXdr;
+    }
+    if (feeBumpData.stellarTxId !== undefined) {
+      transactions[index].stellarTxId = feeBumpData.stellarTxId;
+    }
+
+    this.saveTransactions(transactions);
+    return transactions[index];
+  }
+
   static getByStatus(status) {
     const transactions = this.loadTransactions();
     return transactions.filter(t => t.status === status);
@@ -202,6 +249,35 @@ class Transaction {
   static _clearAllData() {
     this.saveTransactions([]);
   }
+
+  /**
+   * Update NFT certificate fields on a transaction record.
+   * @param {string} id - Transaction ID
+   * @param {Object} nftData
+   * @param {string} [nftData.nft_asset_code]
+   * @param {string} [nftData.nft_issuer]
+   * @param {string} [nftData.nft_tx_hash]
+   * @param {string} [nftData.nft_minted_at]
+   * @param {string} [nftData.nft_mint_error]
+   * @returns {Object} Updated transaction
+   */
+  static updateNftData(id, nftData) {
+    const transactions = this.loadTransactions();
+    const index = transactions.findIndex(t => t.id === id);
+    if (index === -1) throw new Error(`Transaction not found: ${id}`);
+
+    const fields = ['nft_asset_code', 'nft_issuer', 'nft_tx_hash', 'nft_minted_at', 'nft_mint_error'];
+    for (const field of fields) {
+      if (Object.prototype.hasOwnProperty.call(nftData, field)) {
+        transactions[index][field] = nftData[field];
+      }
+    }
+
+    this.saveTransactions(transactions);
+    return transactions[index];
+  }
 }
+
+Transaction.eventEmitter = donationEvents;
 
 module.exports = Transaction;

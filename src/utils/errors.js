@@ -25,6 +25,7 @@ const ERROR_CODES = {
   INVALID_FREQUENCY:       { code: 'INVALID_FREQUENCY',       numeric: 1006 },
   MISSING_REQUIRED_FIELD:  { code: 'MISSING_REQUIRED_FIELD',  numeric: 1007 },
   IDEMPOTENCY_KEY_REQUIRED:{ code: 'IDEMPOTENCY_KEY_REQUIRED',numeric: 1008 },
+  INVALID_SCHEMA_VERSION:  { code: 'INVALID_SCHEMA_VERSION',  numeric: 1009 },
 
   // Authentication/Authorization errors (2000-2099)
   UNAUTHORIZED:             { code: 'UNAUTHORIZED',             numeric: 2000 },
@@ -47,6 +48,23 @@ const ERROR_CODES = {
   // Business logic errors (5000-5099)
   INSUFFICIENT_BALANCE: { code: 'INSUFFICIENT_BALANCE', numeric: 5000 },
   TRANSACTION_FAILED:   { code: 'TRANSACTION_FAILED',   numeric: 5001 },
+  FEE_BUMP_MAX_ATTEMPTS:  { code: 'FEE_BUMP_MAX_ATTEMPTS',  numeric: 5010 },
+  FEE_BUMP_EXCEEDS_CAP:   { code: 'FEE_BUMP_EXCEEDS_CAP',   numeric: 5011 },
+  FEE_BUMP_INVALID_STATE: { code: 'FEE_BUMP_INVALID_STATE', numeric: 5012 },
+  FEE_BUMP_NO_ENVELOPE:   { code: 'FEE_BUMP_NO_ENVELOPE',   numeric: 5013 },
+  FEE_BUMP_FAILED:        { code: 'FEE_BUMP_FAILED',        numeric: 5014 },
+
+  // Routing errors (5020-5029)
+  ROUTING_STRATEGY_REQUIRED: { code: 'ROUTING_STRATEGY_REQUIRED', numeric: 5020 },
+  INVALID_ROUTING_STRATEGY:  { code: 'INVALID_ROUTING_STRATEGY',  numeric: 5021 },
+  POOL_NAME_REQUIRED:        { code: 'POOL_NAME_REQUIRED',        numeric: 5022 },
+  POOL_NOT_FOUND:            { code: 'POOL_NOT_FOUND',            numeric: 5023 },
+  POOL_EMPTY:                { code: 'POOL_EMPTY',                numeric: 5024 },
+  POOL_ALREADY_EXISTS:       { code: 'POOL_ALREADY_EXISTS',       numeric: 5025 },
+  RECIPIENT_NOT_IN_POOL:     { code: 'RECIPIENT_NOT_IN_POOL',     numeric: 5026 },
+  DONOR_COORDINATES_REQUIRED:{ code: 'DONOR_COORDINATES_REQUIRED',numeric: 5027 },
+  NO_ELIGIBLE_RECIPIENTS:    { code: 'NO_ELIGIBLE_RECIPIENTS',    numeric: 5028 },
+  NO_ACTIVE_CAMPAIGNS:       { code: 'NO_ACTIVE_CAMPAIGNS',       numeric: 5029 },
 
   // Rate limiting errors (6000-6099)
   RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },
