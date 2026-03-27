@@ -419,6 +419,43 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Bump an account's sequence number to a specific value.
+   * Submits a BumpSequence operation signed by the account's secret key.
+   * Useful for invalidating pre-signed transactions (time-locked escrow, etc.).
+   *
+   * @param {string} secret - Secret key of the account to bump
+   * @param {string|number} bumpTo - Target sequence number (must be > current)
+   * @returns {Promise<{hash: string, ledger: number, newSequence: string}>}
+   */
+  async bumpSequence(secret, bumpTo) {
+    return StellarErrorHandler.wrap(async () => {
+      const keypair = StellarSdk.Keypair.fromSecret(secret);
+      const account = await withTimeout(
+        this.server.loadAccount(keypair.publicKey()),
+        this.timeouts.api,
+        'loadAccount timed out'
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.bumpSequence({ bumpTo: String(bumpTo) }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(keypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      return {
+        hash: result.hash,
+        ledger: result.ledger,
+        newSequence: String(bumpTo),
+      };
+    }, 'bumpSequence');
+  }
+
+  /**
    * Send a donation transaction
    * @param {Object} params
    * @param {string} params.sourceSecret - Source account secret key

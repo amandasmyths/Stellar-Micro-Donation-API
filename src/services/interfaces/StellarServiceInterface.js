@@ -49,6 +49,19 @@ class StellarServiceInterface {
     throw new Error('buildAndSubmitFeeBumpTransaction() must be implemented');
   }
 
+  /**
+   * Bump an account's sequence number to a specific value.
+   * Useful for invalidating pre-signed transactions (time-locked escrow, etc.).
+   * @param {string} secret - Secret key of the account to bump
+   * @param {string|number} bumpTo - Target sequence number (must be > current)
+   * @returns {Promise<{hash: string, ledger: number, newSequence: string}>}
+   */
+  async bumpSequence(_secret, _bumpTo) {
+    void _secret;
+    void _bumpTo;
+    throw new Error('bumpSequence() must be implemented');
+  }
+
   isValidAddress(address) {
     void address;
     throw new Error('isValidAddress() must be implemented');
