@@ -118,6 +118,30 @@ module.exports = async () => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS campaigns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      goal_amount REAL NOT NULL,
+      current_amount REAL DEFAULT 0,
+      start_date DATETIME,
+      end_date DATETIME,
+      status TEXT DEFAULT 'active',
+      created_by INTEGER,
+      funding_model TEXT NOT NULL DEFAULT 'keep-what-you-raise',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      deleted_at DATETIME DEFAULT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'default'
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS escrow_pledges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id INTEGER NOT NULL,
+      donor_id INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'held',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
   } catch (e) {
     // Ignore errors - tables may already exist
   }

@@ -20,7 +20,8 @@ const createCampaignSchema = validateSchema({
       description: { type: 'string', required: false },
       goal_amount: { type: 'number', required: true, min: 1 },
       start_date: { type: 'string', required: false },
-      end_date: { type: 'string', required: false }
+      end_date: { type: 'string', required: false },
+      funding_model: { type: 'string', required: false, enum: ['all-or-nothing', 'keep-what-you-raise'] }
     }
   }
 });
@@ -43,7 +44,7 @@ const updateCampaignSchema = validateSchema({
  */
 router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampaignSchema, async (req, res, next) => {
   try {
-    const { name, description, goal_amount, start_date, end_date } = req.body;
+    const { name, description, goal_amount, start_date, end_date, funding_model } = req.body;
     
     // Explicit numeric validation bridging
     const goalValidation = validateFloat(goal_amount);
@@ -51,16 +52,19 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
       return res.status(400).json({ success: false, error: 'Goal Amount must be a valid number' });
     }
 
+    const model = funding_model || 'keep-what-you-raise';
+
     const dbResult = await Database.run(
-      `INSERT INTO campaigns (name, description, goal_amount, current_amount, start_date, end_date, created_by, status)
-       VALUES (?, ?, ?, 0, ?, ?, ?, 'active')`,
+      `INSERT INTO campaigns (name, description, goal_amount, current_amount, start_date, end_date, created_by, status, funding_model)
+       VALUES (?, ?, ?, 0, ?, ?, ?, 'active', ?)`,
       [
         name,
         description || null,
         goalValidation.value,
         start_date || new Date().toISOString(),
         end_date || null,
-        req.user ? req.user.id : null
+        req.user ? req.user.id : null,
+        model
       ]
     );
 
@@ -348,6 +352,67 @@ router.get('/:id/progress/stream', requireApiKey, async (req, res, next) => {
   // Add client to SSE manager
   const filter = { campaignId };
   SseManager.addClient(clientId, keyId, filter, res);
+});
+
+// ─── All-or-Nothing Crowdfunding Routes ──────────────────────────────────────
+
+const CrowdfundingService = require('../services/CrowdfundingService');
+
+/**
+ * POST /campaigns/:id/pledge
+ * Pledge a donation to an all-or-nothing campaign (held in escrow).
+ * Body: { donor_id: number, amount: number }
+ */
+router.post('/:id/pledge', requireApiKey, async (req, res, next) => {
+  try {
+    const campaignId = parseInt(req.params.id, 10);
+    const { donor_id, amount } = req.body;
+
+    if (!donor_id || typeof donor_id !== 'number') {
+      return res.status(400).json({ success: false, error: 'donor_id must be a number' });
+    }
+    const amountValidation = validateFloat(amount);
+    if (!amountValidation.valid || amountValidation.value <= 0) {
+      return res.status(400).json({ success: false, error: 'amount must be a positive number' });
+    }
+
+    const result = await CrowdfundingService.pledge(campaignId, donor_id, amountValidation.value);
+    res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ success: false, error: error.message });
+    next(error);
+  }
+});
+
+/**
+ * POST /campaigns/:id/settle
+ * Settle a campaign: release funds if goal met, refund all donors otherwise.
+ * Idempotent — safe to call multiple times.
+ */
+router.post('/:id/settle', requireApiKey, checkPermission(PERMISSIONS.ADMIN), async (req, res, next) => {
+  try {
+    const campaignId = parseInt(req.params.id, 10);
+    const result = await CrowdfundingService.settle(campaignId);
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ success: false, error: error.message });
+    next(error);
+  }
+});
+
+/**
+ * GET /campaigns/:id/escrow
+ * Get escrow state: all pledges, total held, goal met status.
+ */
+router.get('/:id/escrow', requireApiKey, async (req, res, next) => {
+  try {
+    const campaignId = parseInt(req.params.id, 10);
+    const state = await CrowdfundingService.getEscrowState(campaignId);
+    res.status(200).json({ success: true, data: state });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ success: false, error: error.message });
+    next(error);
+  }
 });
 
 module.exports = router;

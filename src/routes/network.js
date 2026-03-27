@@ -14,6 +14,7 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
+const { getFeeStats } = require('../services/NetworkFeeService');
 
 /**
  * GET /network/status
@@ -174,6 +175,36 @@ router.post('/queue/:queueId/retry', requireAdmin(), async (req, res, next) => {
     log.error('NETWORK_ROUTES', 'Failed to retry queued transaction', {
       error: err.message,
       queueId: req.params.queueId,
+      requestId: req.id,
+    });
+    next(err);
+  }
+});
+
+/**
+ * GET /network/fees
+ * Get current Stellar network fee statistics with recommendations and congestion level.
+ * Cached for 30 seconds to avoid hammering Horizon.
+ *
+ * @returns {Object} Fee stats, recommendations, and congestion level
+ */
+router.get('/fees', async (req, res, next) => {
+  try {
+    const stellarService = require('../config/serviceContainer').getStellarService();
+    const horizonUrl = stellarService
+      ? stellarService.getHorizonUrl()
+      : (process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org');
+
+    const data = await getFeeStats(horizonUrl);
+
+    res.json({
+      success: true,
+      data,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    log.error('NETWORK_ROUTES', 'Failed to get fee stats', {
+      error: err.message,
       requestId: req.id,
     });
     next(err);
