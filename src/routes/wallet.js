@@ -468,4 +468,81 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
   }
 });
 
+const bumpSequenceSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'integerString', required: true },
+    },
+  },
+  body: {
+    fields: {
+      secret: { type: 'string', required: true, minLength: 56, maxLength: 56 },
+      bumpTo: { type: 'string', required: true, minLength: 1, maxLength: 30 },
+    },
+  },
+});
+
+/**
+ * POST /wallets/:id/bump-sequence
+ * Bump the Stellar sequence number for a wallet to a specific value.
+ * Useful for invalidating pre-signed transactions (time-locked escrow, etc.).
+ *
+ * Requires admin authentication. The `secret` in the request body is the
+ * Stellar secret key of the account whose sequence number will be bumped.
+ *
+ * @param {string} req.params.id - Wallet ID
+ * @param {string} req.body.secret - Stellar secret key of the account
+ * @param {string} req.body.bumpTo - Target sequence number (must be > current)
+ * @returns {{ success: boolean, data: { hash, ledger, newSequence } }}
+ */
+router.post(
+  '/:id/bump-sequence',
+  checkPermission(PERMISSIONS.ADMIN_ALL),
+  bumpSequenceSchema,
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { secret, bumpTo } = req.body;
+
+      // Verify wallet exists in our system
+      const wallet = walletService.getWalletById(id);
+
+      const stellarService = require('../config/serviceContainer').getStellarService();
+      const result = await stellarService.bumpSequence(secret, bumpTo);
+
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.WALLET_OPERATION,
+        action: AuditLogService.ACTION.BUMP_SEQUENCE_EXECUTED,
+        severity: AuditLogService.SEVERITY.HIGH,
+        result: 'SUCCESS',
+        userId: req.user && req.user.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: `/wallets/${id}/bump-sequence`,
+        details: {
+          walletId: id,
+          walletAddress: wallet.address,
+          bumpTo,
+          hash: result.hash,
+        },
+      }).catch(() => {});
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.WALLET_OPERATION,
+        action: AuditLogService.ACTION.BUMP_SEQUENCE_FAILED,
+        severity: AuditLogService.SEVERITY.HIGH,
+        result: 'FAILURE',
+        userId: req.user && req.user.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: `/wallets/${req.params.id}/bump-sequence`,
+        details: { walletId: req.params.id, error: error.message },
+      }).catch(() => {});
+      next(error);
+    }
+  }
+);
+
 module.exports = router;

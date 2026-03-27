@@ -1236,6 +1236,57 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Simulate bumping an account's sequence number.
+   * Updates the in-memory wallet sequence and returns a mock transaction result.
+   *
+   * @param {string} secret - Secret key of the account to bump
+   * @param {string|number} bumpTo - Target sequence number (must be > current)
+   * @returns {Promise<{hash: string, ledger: number, newSequence: string}>}
+   */
+  async bumpSequence(secret, bumpTo) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    if (!secret) {
+      throw new ValidationError('secret is required');
+    }
+    this._validateSecretKey(secret);
+
+    const bumpToNum = BigInt(bumpTo);
+    if (bumpToNum < BigInt(0)) {
+      throw new ValidationError('bumpTo must be a non-negative integer');
+    }
+
+    const wallet = this._findWalletBySecret(secret);
+    if (!wallet) {
+      throw new NotFoundError('Account not found for provided secret key', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    const currentSeq = BigInt(wallet.sequence || 0);
+    if (bumpToNum <= currentSeq) {
+      throw new BusinessLogicError(
+        ERROR_CODES.INVALID_REQUEST || 'INVALID_REQUEST',
+        `bumpTo (${bumpTo}) must be greater than current sequence (${currentSeq})`
+      );
+    }
+
+    wallet.sequence = String(bumpToNum);
+
+    const hash = 'mock_bumpseq_' + crypto.randomBytes(16).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    log.info('MOCK_STELLAR_SERVICE', 'Bump sequence submitted', {
+      publicKey: wallet.publicKey,
+      previousSequence: String(currentSeq),
+      newSequence: String(bumpToNum),
+      hash,
+    });
+
+    return { hash, ledger, newSequence: String(bumpToNum) };
+  }
+
+  /**
    * Create a mock DEX offer.
    *
    * @param {Object} params
