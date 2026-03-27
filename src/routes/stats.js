@@ -17,6 +17,7 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
 const AuditLogService = require('../services/AuditLogService');
+const { cacheMiddleware } = require('../middleware/caching');
 
 /** Fire-and-forget audit log for stats data access */
 function auditStatsAccess(req, res, next) {
@@ -102,7 +103,7 @@ router.get('/tags', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, s
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, cacheMiddleware('stats', 'private'), strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -148,6 +149,7 @@ router.get(
   "/weekly",
   checkPermission(PERMISSIONS.STATS_READ),
   auditStatsAccess,
+  cacheMiddleware('stats', 'private'),
   strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
@@ -185,6 +187,7 @@ router.get(
   "/summary",
   checkPermission(PERMISSIONS.STATS_READ),
   auditStatsAccess,
+  cacheMiddleware('stats', 'private'),
   strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {

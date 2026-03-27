@@ -20,6 +20,8 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const WalletService = require('../services/WalletService');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
+const { cacheMiddleware } = require('../middleware/caching');
+const { cacheMiddleware } = require('../middleware/caching');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const { validateDataEntry } = require('../middleware/validateDataEntry');
@@ -128,7 +130,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
  * GET /wallets
  * Get all wallets
  */
-router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res, next) => {
+router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wallet', 'private'), (req, res, next) => {
   try {
     const pagination = parseCursorPaginationQuery(req.query);
     const result = walletService.getPaginatedWallets(pagination);
@@ -173,9 +175,7 @@ router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
  * GET /wallets/:id
  * Get a specific wallet
  */
-router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
-  try {
-    const wallet = await walletService.getWalletById(req.params.id);
+router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, cacheMiddleware('wallet', 'private'), async (req, res, next) => {
     if (!wallet) {
       return res.status(404).json({ success: false, error: 'Wallet not found' });
     }

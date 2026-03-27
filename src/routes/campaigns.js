@@ -12,6 +12,7 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { validateFloat } = require('../utils/validationHelpers');
+const { cacheMiddleware } = require('../middleware/caching');
 
 const createCampaignSchema = validateSchema({
   body: {
@@ -79,9 +80,7 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
  * GET /campaigns
  * Retrieves active/all campaigns dynamically.
  */
-router.get('/', async (req, res, next) => {
-  try {
-    const status = req.query.status;
+router.get('/', cacheMiddleware('campaign', 'public'), async (req, res, next) => {
     let query = 'SELECT * FROM campaigns';
     let params = [];
 
@@ -113,10 +112,7 @@ router.get('/', async (req, res, next) => {
  * GET /campaigns/:id
  * Retrieve a specific campaign securely.
  */
-router.get('/:id', async (req, res, next) => {
-  try {
-    const id = req.params.id;
-    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [id]);
+router.get('/:id', cacheMiddleware('campaign', 'public'), async (req, res, next) => {
     
     if (!campaign) {
       return res.status(404).json({ success: false, error: 'Campaign not found' });
