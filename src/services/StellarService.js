@@ -1817,6 +1817,73 @@ class StellarService extends StellarServiceInterface {
       };
     }, 'updateSignerWeight');
   }
+  /**
+   * Query the current order book snapshot for a trading pair.
+   *
+   * @param {string} sellingAsset - Base asset ('XLM' or 'CODE:ISSUER')
+   * @param {string} buyingAsset  - Counter asset ('XLM' or 'CODE:ISSUER')
+   * @param {number} [limit=20]   - Max entries per side (1-200)
+   * @returns {Promise<{bids: Array, asks: Array, base: Object, counter: Object}>}
+   */
+  async getOrderBook(sellingAsset, buyingAsset, limit = 20) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+      if (!sellingAsset || !buyingAsset) {
+        throw new ValidationError('sellingAsset and buyingAsset are required');
+      }
+
+      const baseAsset = sellingAsset === 'XLM'
+        ? StellarSdk.Asset.native()
+        : (() => { const [code, issuer] = sellingAsset.split(':'); return new StellarSdk.Asset(code, issuer); })();
+      const counterAsset = buyingAsset === 'XLM'
+        ? StellarSdk.Asset.native()
+        : (() => { const [code, issuer] = buyingAsset.split(':'); return new StellarSdk.Asset(code, issuer); })();
+
+      const result = await this._executeWithRetry(() =>
+        this.server.orderbook(baseAsset, counterAsset).limit(limit).call()
+      );
+
+      return {
+        bids: result.bids || [],
+        asks: result.asks || [],
+        base: result.base || {},
+        counter: result.counter || {},
+      };
+    }, 'getOrderBook');
+  }
+
+  /**
+   * Stream real-time order book updates for a trading pair via Horizon SSE.
+   *
+   * @param {string}   sellingAsset - Base asset ('XLM' or 'CODE:ISSUER')
+   * @param {string}   buyingAsset  - Counter asset ('XLM' or 'CODE:ISSUER')
+   * @param {Function} onUpdate     - Callback invoked with each order book update
+   * @returns {Function} close — call to terminate the Horizon stream and prevent memory leaks
+   */
+  streamOrderbook(sellingAsset, buyingAsset, onUpdate) {
+    const baseAsset = sellingAsset === 'XLM'
+      ? StellarSdk.Asset.native()
+      : (() => { const [code, issuer] = sellingAsset.split(':'); return new StellarSdk.Asset(code, issuer); })();
+    const counterAsset = buyingAsset === 'XLM'
+      ? StellarSdk.Asset.native()
+      : (() => { const [code, issuer] = buyingAsset.split(':'); return new StellarSdk.Asset(code, issuer); })();
+
+    const close = this.server.orderbook(baseAsset, counterAsset).stream({
+      onmessage: (update) => {
+        try {
+          onUpdate(update);
+        } catch (err) {
+          log.error('STELLAR_SERVICE', 'orderbook stream callback error', { error: err.message });
+        }
+      },
+      onerror: (err) => {
+        log.error('STELLAR_SERVICE', 'orderbook stream error', { error: err.message });
+      },
+    });
+
+    return close;
+  }
+
 }
 
 module.exports = StellarService;

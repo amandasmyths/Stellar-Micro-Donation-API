@@ -2641,6 +2641,58 @@ class MockStellarService extends StellarServiceInterface {
     const ledger = Math.floor(Math.random() * 1000000) + 1;
     return { hash, ledger };
   }
+
+  /**
+   * Stream mock order book updates for a trading pair.
+   *
+   * Returns a close function. Call `mock.triggerOrderbookUpdate(key, data)` in tests
+   * to push a simulated update to all active listeners for that pair.
+   *
+   * @param {string}   sellingAsset - Base asset ('XLM' or 'CODE:ISSUER')
+   * @param {string}   buyingAsset  - Counter asset ('XLM' or 'CODE:ISSUER')
+   * @param {Function} onUpdate     - Callback invoked with each order book update
+   * @returns {Function} close — removes this listener from the mock registry
+   */
+  streamOrderbook(sellingAsset, buyingAsset, onUpdate) {
+    if (!this._orderbookListeners) this._orderbookListeners = new Map();
+    const key = `${sellingAsset}:${buyingAsset}`;
+    if (!this._orderbookListeners.has(key)) this._orderbookListeners.set(key, new Set());
+    this._orderbookListeners.get(key).add(onUpdate);
+
+    return () => {
+      const listeners = this._orderbookListeners.get(key);
+      if (listeners) listeners.delete(onUpdate);
+    };
+  }
+
+  /**
+   * Trigger a simulated order book update for a trading pair (test helper).
+   *
+   * @param {string} sellingAsset - Base asset key
+   * @param {string} buyingAsset  - Counter asset key
+   * @param {Object} data         - Order book snapshot to push to listeners
+   */
+  triggerOrderbookUpdate(sellingAsset, buyingAsset, data) {
+    if (!this._orderbookListeners) return;
+    const key = `${sellingAsset}:${buyingAsset}`;
+    const listeners = this._orderbookListeners.get(key);
+    if (!listeners) return;
+    for (const cb of listeners) {
+      try { cb(data); } catch (e) { /* ignore */ }
+    }
+  }
+
+  /**
+   * Return the number of active orderbook stream listeners for a pair (test helper).
+   * @param {string} sellingAsset
+   * @param {string} buyingAsset
+   * @returns {number}
+   */
+  getOrderbookListenerCount(sellingAsset, buyingAsset) {
+    if (!this._orderbookListeners) return 0;
+    const key = `${sellingAsset}:${buyingAsset}`;
+    return this._orderbookListeners.has(key) ? this._orderbookListeners.get(key).size : 0;
+  }
 }
 
 module.exports = MockStellarService;

@@ -347,7 +347,7 @@ exports.attachUserRole = () => {
       }
 
       // Priority 2: Use context from existing apiKey middleware if present
-      if (req.apiKey) {
+      else if (req.apiKey) {
         const role = req.apiKey.role || 'user';
         const keyId = req.apiKey.id || 'legacy';
 
@@ -359,8 +359,11 @@ exports.attachUserRole = () => {
           scopes: req.apiKey.scopes || [],
           isLegacy: req.apiKey.isLegacy || false
         };
+        return next();
       }
-
+      // Priority 3: x-api-key header lookup
+      else if (req.headers && req.headers['x-api-key']) {
+        const apiKey = req.headers['x-api-key'];
         const keyInfo = await validateApiKey(apiKey);
 
         if (keyInfo) {

@@ -225,6 +225,7 @@ app.use('/campaigns', campaignsRoutes);
 app.use('/encryption', encryptionRoutes);
 app.use('/tiers', tiersRoutes);
 app.use('/offers', offersRoutes);
+app.use('/orderbook/:baseAsset/:counterAsset', require('./orderbook'));
 app.use('/tags', tagsRoutes);
 app.use('/leaderboard', leaderboardRoutes);
 app.use('/auth', authRoutes);
