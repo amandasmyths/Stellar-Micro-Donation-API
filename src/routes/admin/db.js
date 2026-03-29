@@ -36,6 +36,15 @@ function parseLimit(rawLimit) {
 }
 
 /**
+ * GET /admin/db/pool-status
+ * Returns current connection pool metrics (issue #631).
+ */
+router.get('/pool-status', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
+  const status = Database.getPoolStatus();
+  res.json({ success: true, data: status });
+});
+
+/**
  * GET /admin/db/slow-queries
  * Returns the slowest queries captured during the last 24 hours.
  */

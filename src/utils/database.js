@@ -11,6 +11,7 @@
  */
 
 const path = require('path');
+const EventEmitter = require('events');
 require('dotenv').config({ path: path.join(__dirname, '../../src/.env') });
 
 // External modules
@@ -22,7 +23,16 @@ const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('./timeoutHandle
 const log = require('./log');
 
 const DEFAULT_POOL_SIZE = 5;
+const DEFAULT_POOL_MIN = 1;
+const DEFAULT_POOL_MAX = 10;
 const DEFAULT_ACQUIRE_TIMEOUT = TIMEOUT_DEFAULTS.DATABASE;
+const HEALTH_CHECK_INTERVAL_MS = 30_000;
+const RECONNECT_BASE_DELAY_MS = 500;
+const RECONNECT_MAX_DELAY_MS = 30_000;
+const RECONNECT_MAX_ATTEMPTS = 10;
+
+/** EventEmitter for database lifecycle events (e.g. 'database.degraded') */
+const dbEvents = new EventEmitter();
 const DEFAULT_SLOW_QUERY_THRESHOLD_MS = 100;
 const DEFAULT_SLOW_QUERY_BUFFER_SIZE = 100;
 const MAX_SLOW_QUERY_ENTRIES = 1000;
@@ -114,16 +124,30 @@ class Database {
 
   /**
    * Read and validate pool configuration from environment variables.
+   * Supports DB_POOL_MIN and DB_POOL_MAX (issue #631) as well as legacy DB_POOL_SIZE.
    *
-   * @returns {{poolSize: number, acquireTimeout: number}} Validated pool config.
+   * @returns {{poolSize: number, poolMin: number, poolMax: number, acquireTimeout: number}} Validated pool config.
    */
   static getPoolConfiguration() {
+    const poolMin = this.parsePositiveIntegerEnv(
+      'DB_POOL_MIN',
+      process.env.DB_POOL_MIN,
+      DEFAULT_POOL_MIN
+    );
+    const poolMax = this.parsePositiveIntegerEnv(
+      'DB_POOL_MAX',
+      process.env.DB_POOL_MAX,
+      DEFAULT_POOL_MAX
+    );
+    const poolSize = this.parsePositiveIntegerEnv(
+      'DB_POOL_SIZE',
+      process.env.DB_POOL_SIZE,
+      Math.min(poolMax, DEFAULT_POOL_SIZE)
+    );
     return {
-      poolSize: this.parsePositiveIntegerEnv(
-        'DB_POOL_SIZE',
-        process.env.DB_POOL_SIZE,
-        DEFAULT_POOL_SIZE
-      ),
+      poolSize: Math.min(poolSize, poolMax),
+      poolMin,
+      poolMax,
       acquireTimeout: this.parsePositiveIntegerEnv(
         'DB_ACQUIRE_TIMEOUT',
         process.env.DB_ACQUIRE_TIMEOUT,
@@ -460,6 +484,8 @@ class Database {
       const config = this.getPoolConfiguration();
       const performanceConfig = this.getPerformanceConfiguration();
       state.poolSize = config.poolSize;
+      state.poolMin = config.poolMin;
+      state.poolMax = config.poolMax;
       state.acquireTimeout = config.acquireTimeout;
       state.closing = false;
       this.performanceState.slowQueryThresholdMs = performanceConfig.slowQueryThresholdMs;
@@ -468,6 +494,8 @@ class Database {
       const connection = await this.createConnectionRecord();
       connection.inUse = false;
       state.initialized = true;
+
+      this._startHealthCheck();
     })();
 
     try {
@@ -821,6 +849,118 @@ class Database {
   }
 
   /**
+   * Return pool status including min/max config and health info (issue #631).
+   *
+   * @returns {{poolSize: number, poolMin: number, poolMax: number, active: number, idle: number, waiting: number, healthy: boolean}}
+   */
+  static getPoolStatus() {
+    const state = this.poolState;
+    const active = state.connections.filter(c => c.inUse).length;
+    const total = state.connections.length;
+    return {
+      poolSize: state.poolSize,
+      poolMin: state.poolMin || DEFAULT_POOL_MIN,
+      poolMax: state.poolMax || DEFAULT_POOL_MAX,
+      active,
+      idle: total - active,
+      waiting: state.waitQueue.length,
+      healthy: state.initialized && !state.closing,
+    };
+  }
+
+  /**
+   * Start the periodic health-check ping (every 30 s).
+   * @private
+   */
+  static _startHealthCheck() {
+    if (this._healthCheckTimer) return;
+    this._healthCheckTimer = setInterval(() => {
+      this._runHealthCheck().catch(() => {});
+    }, HEALTH_CHECK_INTERVAL_MS);
+    if (this._healthCheckTimer.unref) this._healthCheckTimer.unref();
+  }
+
+  /** @private */
+  static _stopHealthCheck() {
+    if (this._healthCheckTimer) {
+      clearInterval(this._healthCheckTimer);
+      this._healthCheckTimer = null;
+    }
+  }
+
+  /**
+   * Ping the database with a lightweight query. On failure, attempt reconnect.
+   * Emits 'database.degraded' when the pool wait queue is exhausted.
+   * @private
+   */
+  static async _runHealthCheck() {
+    if (!this.poolState.initialized || this.poolState.closing) return;
+    try {
+      await this.get('SELECT 1 AS ping');
+    } catch (err) {
+      log.warn('DATABASE', 'Health check failed — attempting reconnect', { error: err.message });
+      await this._reconnectWithBackoff();
+    }
+
+    // Emit degraded event when pool is exhausted
+    const state = this.poolState;
+    if (state.waitQueue.length > 0 && state.connections.filter(c => !c.inUse).length === 0) {
+      dbEvents.emit('database.degraded', {
+        waiting: state.waitQueue.length,
+        active: state.connections.filter(c => c.inUse).length,
+        total: state.connections.length,
+      });
+      log.warn('DATABASE', 'Pool exhausted — database.degraded event emitted', {
+        waiting: state.waitQueue.length,
+      });
+    }
+  }
+
+  /**
+   * Attempt to create a fresh connection with exponential backoff.
+   * @private
+   */
+  static async _reconnectWithBackoff() {
+    let delay = RECONNECT_BASE_DELAY_MS;
+    for (let attempt = 1; attempt <= RECONNECT_MAX_ATTEMPTS; attempt++) {
+      if (this.poolState.closing) return;
+      try {
+        const conn = await this.createConnectionRecord();
+        conn.inUse = false;
+        log.info('DATABASE', 'Reconnected successfully', { attempt });
+        return;
+      } catch (err) {
+        log.warn('DATABASE', 'Reconnect attempt failed', { attempt, error: err.message });
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, RECONNECT_MAX_DELAY_MS);
+      }
+    }
+    log.error('DATABASE', 'All reconnect attempts exhausted');
+    dbEvents.emit('database.degraded', { reason: 'reconnect_exhausted' });
+  }
+
+  /**
+   * Subscribe to database lifecycle events.
+   * Supported events: 'database.degraded'
+   *
+   * @param {string} event
+   * @param {Function} listener
+   */
+  static on(event, listener) {
+    dbEvents.on(event, listener);
+  }
+
+  /**
+   * Remove a database lifecycle event listener.
+   *
+   * @param {string} event
+   * @param {Function} listener
+   */
+  static off(event, listener) {
+    dbEvents.off(event, listener);
+  }
+
+  /**
    * Close all pooled connections and reject queued waiters.
    *
    * @returns {Promise<void>} Resolves when shutdown bookkeeping completes.
@@ -828,6 +968,8 @@ class Database {
   static async close() {
     const state = this.poolState;
     state.closing = true;
+
+    this._stopHealthCheck();
 
     while (state.waitQueue.length > 0) {
       const waiter = state.waitQueue.shift();
@@ -851,6 +993,8 @@ class Database {
     state.initialized = false;
     state.initializing = null;
     state.poolSize = DEFAULT_POOL_SIZE;
+    state.poolMin = DEFAULT_POOL_MIN;
+    state.poolMax = DEFAULT_POOL_MAX;
     state.acquireTimeout = DEFAULT_ACQUIRE_TIMEOUT;
     state.nextConnectionId = 1;
     state.pendingCreations = 0;
