@@ -2810,34 +2810,156 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
-   * Mock openChannel
+   * Add a trustline for an asset to an account (mock implementation).
+   * @param {string} publicKey - Account public key
+   * @param {Object} asset - Asset object with code and issuer
+   * @returns {Promise<{hash: string, ledger: number}>}
    */
-  async openChannel(sourceSecret, recipientPublicKey, depositAmount) {
-    const escrowPublicKey = 'G' + crypto.randomBytes(32).toString('hex').toUpperCase().slice(0, 56);
-    const escrowSecret = 'S' + crypto.randomBytes(32).toString('hex').toUpperCase().slice(0, 56);
-    return {
-      escrowPublicKey,
-      escrowSecret,
-      transactionId: 'mock_tx_' + crypto.randomBytes(8).toString('hex'),
-      ledger: Math.floor(Math.random() * 1000000),
-    };
+  async addTrustline(publicKey, asset) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validatePublicKey(publicKey);
+      this._simulateFailure();
+
+      // Validate asset code
+      if (!asset.code || !/^[A-Za-z0-9]{1,12}$/.test(asset.code)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      // Validate issuer
+      if (!asset.issuer || !this.isValidAddress(asset.issuer)) {
+        throw new ValidationError('Invalid issuer public key');
+      }
+
+      const wallet = this.wallets.get(publicKey);
+      if (!wallet) {
+        throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
+      }
+
+      // Initialize trustlines array if it doesn't exist
+      if (!wallet.trustlines) {
+        wallet.trustlines = new Map();
+      }
+
+      const assetKey = getAssetKey(asset);
+      
+      // Check if trustline already exists
+      if (wallet.trustlines.has(assetKey)) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Trustline already exists for this asset'
+        );
+      }
+
+      // Add trustline with zero balance and maximum limit
+      wallet.trustlines.set(assetKey, {
+        asset: { code: asset.code, issuer: asset.issuer },
+        balance: '0.0000000',
+        limit: '922337203685.4775807', // Maximum Stellar limit
+        active: true
+      });
+
+      const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
+      const ledger = Math.floor(Math.random() * 1000000) + 1;
+
+      log.info('MOCK_STELLAR_SERVICE', 'Trustline added', {
+        publicKey,
+        assetCode: asset.code,
+        issuer: asset.issuer,
+        hash
+      });
+
+      return { hash, ledger };
+    });
   }
 
   /**
-   * Mock updateChannel
+   * Remove a trustline for an asset from an account (mock implementation).
+   * @param {string} publicKey - Account public key
+   * @param {Object} asset - Asset object with code and issuer
+   * @returns {Promise<{hash: string, ledger: number}>}
    */
-  async updateChannel(channelId, newAmount) {
-    return { channelId, balance: newAmount, updated: true };
+  async removeTrustline(publicKey, asset) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validatePublicKey(publicKey);
+      this._simulateFailure();
+
+      const wallet = this.wallets.get(publicKey);
+      if (!wallet) {
+        throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
+      }
+
+      if (!wallet.trustlines) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'No trustlines exist for this account'
+        );
+      }
+
+      const assetKey = getAssetKey(asset);
+      const trustline = wallet.trustlines.get(assetKey);
+
+      if (!trustline) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Trustline does not exist for this asset'
+        );
+      }
+
+      // Check if balance is zero
+      if (parseFloat(trustline.balance) > 0) {
+        throw new ValidationError('Cannot remove trustline with non-zero balance');
+      }
+
+      // Remove trustline
+      wallet.trustlines.delete(assetKey);
+
+      const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
+      const ledger = Math.floor(Math.random() * 1000000) + 1;
+
+      log.info('MOCK_STELLAR_SERVICE', 'Trustline removed', {
+        publicKey,
+        assetCode: asset.code,
+        issuer: asset.issuer,
+        hash
+      });
+
+      return { hash, ledger };
+    });
   }
 
   /**
-   * Mock closeChannel
+   * Get all trustlines for an account with their balances (mock implementation).
+   * @param {string} publicKey - Account public key
+   * @returns {Promise<Array<{asset: Object, balance: string, limit: string}>>}
    */
-  async closeChannel(channelId, escrowSecret, recipientPublicKey, amount) {
-    return {
-      transactionId: 'mock_settle_' + crypto.randomBytes(8).toString('hex'),
-      ledger: Math.floor(Math.random() * 1000000),
-    };
+  async getTrustlines(publicKey) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validatePublicKey(publicKey);
+
+      const wallet = this.wallets.get(publicKey);
+      if (!wallet) {
+        throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
+      }
+
+      if (!wallet.trustlines) {
+        return [];
+      }
+
+      // Convert Map to array and return trustline data
+      const trustlines = Array.from(wallet.trustlines.values()).map(trustline => ({
+        asset: trustline.asset,
+        balance: trustline.balance,
+        limit: trustline.limit
+      }));
+
+      return trustlines;
+    });
   }
 }
 
