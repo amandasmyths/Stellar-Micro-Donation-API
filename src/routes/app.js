@@ -7,6 +7,7 @@ const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 const NetworkStatusService = require('../services/NetworkStatusService');
 const { router: networkRoutes, setService: setNetworkService } = require('./network');
+const docsRoutes = require('./docs');
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use('/wallets', walletRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
 app.use('/network', networkRoutes);
+app.use('/docs', docsRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

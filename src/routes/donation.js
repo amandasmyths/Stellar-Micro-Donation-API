@@ -3,6 +3,7 @@ const router = express.Router();
 const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
+const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
 /**
  * POST /api/v1/donation/verify
@@ -13,13 +14,9 @@ router.post('/verify', async (req, res) => {
     const { transactionHash } = req.body;
 
     if (!transactionHash) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Transaction hash is required'
-        }
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_TRANSACTION_HASH', receivedValue: transactionHash }])
+      );
     }
 
     const result = await stellarService.verifyTransaction(transactionHash);
@@ -49,46 +46,35 @@ router.post('/', (req, res) => {
     const idempotencyKey = req.headers['idempotency-key'];
 
      if (!idempotencyKey) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'IDEMPOTENCY_KEY_REQUIRED',
-          message: 'Idempotency key is required'
-        }
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_IDEMPOTENCY_KEY', receivedValue: undefined }])
+      );
     }
 
     const { amount, donor, recipient } = req.body;
 
     if (!amount || !recipient) {
-      return res.status(400).json({
-        error: 'Missing required fields: amount, recipient'
-      });
+      const errors = [];
+      if (!amount) errors.push({ code: 'MISSING_AMOUNT', receivedValue: amount });
+      if (!recipient) errors.push({ code: 'MISSING_RECIPIENT', receivedValue: recipient });
+      return res.status(400).json(buildErrorResponse(errors));
     }
 
     const parsedAmount = parseFloat(amount);
 
     // Validate amount type and basic checks
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json({
-        error: 'Amount must be a positive number'
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: parsedAmount <= 0 ? 'AMOUNT_TOO_LOW' : 'INVALID_AMOUNT_TYPE', receivedValue: amount }])
+      );
     }
 
     // Validate amount against configured limits
     const amountValidation = donationValidator.validateAmount(parsedAmount);
     if (!amountValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: amountValidation.code,
-          message: amountValidation.error,
-          limits: {
-            min: amountValidation.minAmount,
-            max: amountValidation.maxAmount,
-          },
-        },
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: amountValidation.code, receivedValue: parsedAmount }])
+      );
     }
 
     // Validate daily limit if donor is specified
@@ -97,16 +83,9 @@ router.post('/', (req, res) => {
       const dailyValidation = donationValidator.validateDailyLimit(parsedAmount, dailyTotal);
       
       if (!dailyValidation.valid) {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: dailyValidation.code,
-            message: dailyValidation.error,
-            dailyLimit: dailyValidation.maxDailyAmount,
-            currentDailyTotal: dailyValidation.currentDailyTotal,
-            remainingDaily: dailyValidation.remainingDaily,
-          },
-        });
+        return res.status(400).json(
+          buildErrorResponse([{ code: dailyValidation.code, receivedValue: parsedAmount }])
+        );
       }
     }
 
@@ -114,9 +93,9 @@ router.post('/', (req, res) => {
     const normalizedRecipient = typeof recipient === 'string' ? recipient.trim() : '';
 
     if (normalizedDonor && normalizedRecipient && normalizedDonor === normalizedRecipient) {
-      return res.status(400).json({
-        error: 'Sender and recipient wallets must be different'
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'SAME_SENDER_RECIPIENT', receivedValue: recipient }])
+      );
     }
 
     // Calculate analytics fee (not deducted on-chain)
@@ -271,16 +250,16 @@ router.patch('/:id/status', async (req, res) => {
     const { status, stellarTxId, ledger } = req.body;
 
     if (!status) {
-      return res.status(400).json({
-        error: 'Missing required field: status'
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_STATUS', receivedValue: status }])
+      );
     }
 
     const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'INVALID_STATUS', receivedValue: status }])
+      );
     }
 
     const stellarData = {};

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Wallet = require('./models/wallet');
 const Database = require('../utils/database');
+const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
 /**
  * POST /wallets
@@ -12,9 +13,9 @@ router.post('/', (req, res) => {
     const { address, label, ownerName } = req.body;
 
     if (!address) {
-      return res.status(400).json({
-        error: 'Missing required field: address'
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_ADDRESS', receivedValue: address }])
+      );
     }
 
     const existingWallet = Wallet.getByAddress(address);
@@ -93,9 +94,9 @@ router.patch('/:id', (req, res) => {
     const { label, ownerName } = req.body;
 
     if (!label && !ownerName) {
-      return res.status(400).json({
-        error: 'At least one field (label or ownerName) is required'
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_WALLET_FIELD', receivedValue: undefined }])
+      );
     }
 
     const updates = {};

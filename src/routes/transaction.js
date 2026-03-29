@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Transaction = require('../models/transaction');
 const TransactionSyncService = require('../../services/TransactionSyncService');
+const { buildErrorResponse } = require('../../utils/validationErrorFormatter');
 
 
 
@@ -15,23 +16,15 @@ router.get('/', async (req, res) => {
 
     
     if (isNaN(limit) || limit <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_LIMIT',
-          message: 'Limit must be a positive number'
-        }
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'INVALID_LIMIT', receivedValue: req.query.limit }])
+      );
     }
 
     if (isNaN(offset) || offset < 0) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_OFFSET',
-          message: 'Offset must be a non-negative number'
-        }
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'INVALID_OFFSET', receivedValue: req.query.offset }])
+      );
     }
 
     const result = Transaction.getPaginated({ limit, offset });
@@ -58,10 +51,9 @@ router.post('/sync', async (req, res) => {
     const { publicKey } = req.body;
 
     if (!publicKey) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'MISSING_PUBLIC_KEY', message: 'publicKey is required' }
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_PUBLIC_KEY', receivedValue: publicKey }])
+      );
     }
 
     const syncService = new TransactionSyncService();
