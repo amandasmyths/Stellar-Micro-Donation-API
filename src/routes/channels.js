@@ -56,7 +56,8 @@ router.post('/open', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE
  */
 router.get('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
   try {
-    const channels = await channelService.listChannels(req.query.status || null);
+    const status = req.query.status || 'open';
+    const channels = await channelService.listChannels(status);
     return res.json({ success: true, data: channels, count: channels.length });
   } catch (err) {
     next(err);
