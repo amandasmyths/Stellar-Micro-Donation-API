@@ -18,6 +18,7 @@ const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
+const Wallet = require('../routes/models/wallet');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const { cacheMiddleware } = require('../middleware/caching');
@@ -408,6 +409,68 @@ router.patch('/:id/limits', requireAdmin(), async (req, res, next) => {
     });
 
     res.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /wallets/:id/leaderboard-visibility
+ * Opt a wallet in or out of public leaderboard ranking.
+ * Body: { visible: boolean }
+ */
+router.patch('/:id/leaderboard-visibility', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+  try {
+    const { visible } = req.body || {};
+    if (typeof visible !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: "'visible' must be a boolean" },
+      });
+    }
+    const wallet = walletService.getWalletById(req.params.id);
+    const updated = Wallet.update(wallet.id, { leaderboard_visibility: visible });
+    res.json({ success: true, data: { id: updated.id, leaderboard_visibility: updated.leaderboard_visibility } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /wallets/:id/sponsor
+ * Sponsor a new account's base reserve using the platform SPONSOR_SECRET.
+ */
+router.post('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+  try {
+    const result = await walletService.sponsorAccount(req.params.id);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /wallets/:id/sponsor
+ * Revoke sponsorship for a wallet. Returns 400 if the account cannot cover its own reserve.
+ */
+router.delete('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+  try {
+    const { entryType } = req.query;
+    const result = await walletService.revokeSponsorship(req.params.id, entryType);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /wallets/:id/sponsor
+ * Return the current sponsorship status for a wallet.
+ */
+router.get('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+  try {
+    const status = await walletService.getSponsorshipStatus(req.params.id);
+    res.json({ success: true, data: status });
   } catch (error) {
     next(error);
   }

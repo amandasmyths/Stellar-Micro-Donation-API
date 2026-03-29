@@ -2094,6 +2094,91 @@ class StellarService extends StellarServiceInterface {
     };
   }
 
+  /**
+   * Sponsor a new account's base reserve using beginSponsoringFutureReserves
+   * and endSponsoringFutureReserves operations.
+   *
+   * @param {string} sponsorSecret        - Secret key of the sponsoring account
+   * @param {string} newAccountPublicKey  - Public key of the account to sponsor
+   * @returns {Promise<{transactionId: string, ledger: number, sponsored: true}>}
+   */
+  async sponsorAccount(sponsorSecret, newAccountPublicKey) {
+    return this._executeWithRetry(async () => {
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const sponsorPublic = sponsorKeypair.publicKey();
+      const account = await this.server.loadAccount(sponsorPublic);
+
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.beginSponsoringFutureReserves({
+          sponsoredId: newAccountPublicKey,
+        }))
+        .addOperation(StellarSdk.Operation.createAccount({
+          destination: newAccountPublicKey,
+          startingBalance: '0',
+          source: sponsorPublic,
+        }))
+        .addOperation(StellarSdk.Operation.endSponsoringFutureReserves({
+          source: newAccountPublicKey,
+        }))
+        .setTimeout(30)
+        .build();
+
+      const newKeypair = StellarSdk.Keypair.fromPublicKey(newAccountPublicKey);
+      transaction.sign(sponsorKeypair, newKeypair);
+
+      const result = await this.server.submitTransaction(transaction);
+      return { transactionId: result.hash, ledger: result.ledger, sponsored: true };
+    }, 'sponsorAccount');
+  }
+
+  /**
+   * Revoke sponsorship for an account entry.
+   *
+   * @param {string} sponsorSecret      - Secret key of the current sponsor
+   * @param {string} targetPublicKey    - Public key of the sponsored account
+   * @param {string} [entryType='account'] - Entry type: 'account' | 'trustline' | 'data'
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   */
+  async revokeSponsorship(sponsorSecret, targetPublicKey, entryType = 'account') {
+    return this._executeWithRetry(async () => {
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const account = await this.server.loadAccount(sponsorKeypair.publicKey());
+
+      const op = StellarSdk.Operation.revokeSponsorship({
+        type: entryType,
+        account: targetPublicKey,
+      });
+
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(op)
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(sponsorKeypair);
+
+      const result = await this.server.submitTransaction(transaction);
+      return { transactionId: result.hash, ledger: result.ledger, revoked: true };
+    }, 'revokeSponsorship');
+  }
+
+  /**
+   * Check the sponsorship status of an account by inspecting its Horizon record.
+   *
+   * @param {string} publicKey - Public key of the account to check
+   * @returns {Promise<{sponsored: boolean, sponsoredBy: string|null}>}
+   */
+  async getSponsorshipStatus(publicKey) {
+    const accountData = await this.server.loadAccount(publicKey);
+    const sponsoredBy = accountData.sponsor || null;
+    return { sponsored: !!sponsoredBy, sponsoredBy };
+  }
+
 }
 
 module.exports = StellarService;

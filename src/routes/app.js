@@ -37,6 +37,7 @@ const corporateMatchingRoutes = require('./corporateMatching');
 const routingAdminRoutes = require('./admin/routing');
 const impactMetricsAdminRoutes = require('./admin/impactMetrics');
 const adminAnalyticsRoutes = require('./admin/analytics');
+const reconciliationAdminRoutes = require('./admin/reconciliation');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
@@ -61,6 +62,7 @@ const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
 const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
+const { createCspMiddleware, cspReportRouter } = require('../middleware/csp');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const trackQuotaUsage = require('../middleware/quotaTracker');
 const { startQuotaResetJob } = require('../jobs/quotaResetJob');
@@ -151,6 +153,10 @@ app.use(helmet({
 // CORS (must be before body parsers and route handlers)
 app.use(createCorsMiddleware());
 
+// CSP: per-request nonce + strict directives (after helmet, before routes)
+app.use(createCspMiddleware());
+app.use(cspReportRouter);
+
 // Geographic IP blocking (must be before body parsers)
 app.use(require('../middleware/geoBlock'));
 
@@ -220,6 +226,7 @@ app.use('/corporate-matching', corporateMatchingRoutes);
 app.use('/admin/routing', routingAdminRoutes);
 app.use('/admin/impact-metrics', impactMetricsAdminRoutes);
 app.use('/admin/analytics', adminAnalyticsRoutes);
+app.use('/admin/reconciliation', reconciliationAdminRoutes);
 app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
 app.use('/admin/cors', require('./admin/corsOrigins'));
 

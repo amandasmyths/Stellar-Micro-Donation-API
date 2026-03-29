@@ -2961,6 +2961,49 @@ class MockStellarService extends StellarServiceInterface {
       return trustlines;
     });
   }
+
+  /**
+   * Alias for createSponsoredAccount using the issue's method name.
+   * Uses beginSponsoringFutureReserves / endSponsoringFutureReserves semantics.
+   *
+   * @param {string} sponsorSecret       - Secret key of the sponsoring account
+   * @param {string} newAccountPublicKey - Public key of the new account to sponsor
+   * @returns {Promise<{transactionId: string, ledger: number, sponsored: true}>}
+   */
+  async sponsorAccount(sponsorSecret, newAccountPublicKey) {
+    return this.createSponsoredAccount(sponsorSecret, newAccountPublicKey);
+  }
+
+  /**
+   * Alias for revokeSponsoredAccount using the issue's method name.
+   *
+   * @param {string} sponsorSecret    - Secret key of the current sponsor
+   * @param {string} targetPublicKey  - Public key of the sponsored account
+   * @param {string} [entryType]      - Ignored in mock; present for interface parity
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   */
+  async revokeSponsorship(sponsorSecret, targetPublicKey, entryType = 'account') {
+    return this.revokeSponsoredAccount(sponsorSecret, targetPublicKey);
+  }
+
+  /**
+   * Return the current sponsorship status for an account.
+   *
+   * @param {string} publicKey - Public key of the account to check
+   * @returns {Promise<{sponsored: boolean, sponsoredBy: string|null}>}
+   */
+  async getSponsorshipStatus(publicKey) {
+    await this._simulateNetworkDelay();
+    this._validatePublicKey(publicKey);
+
+    if (!this.sponsorships) this.sponsorships = new Map();
+    const record = this.sponsorships.get(publicKey);
+
+    if (!record || record.revokedAt) {
+      return { sponsored: false, sponsoredBy: null };
+    }
+    return { sponsored: true, sponsoredBy: record.sponsor };
+  }
 }
 
 module.exports = MockStellarService;

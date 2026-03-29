@@ -311,6 +311,91 @@ class WalletService {
   }
 
   /**
+   * Sponsor a new account's base reserve via the Stellar sponsorship protocol.
+   * Requires SPONSOR_SECRET to be configured.
+   *
+   * @param {string} id - Wallet ID of the account to sponsor
+   * @returns {Promise<{transactionId: string, ledger: number, sponsored: true}>}
+   * @throws {ValidationError} If SPONSOR_SECRET is not configured or service unavailable
+   * @throws {NotFoundError} If wallet not found
+   */
+  async sponsorAccount(id) {
+    const wallet = this.getWalletById(id);
+    if (!process.env.SPONSOR_SECRET) {
+      throw new ValidationError('SPONSOR_SECRET is not configured', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+    const result = await this.stellarService.sponsorAccount(process.env.SPONSOR_SECRET, wallet.address);
+    Wallet.update(id, { sponsored: true, sponsoredAt: new Date().toISOString() });
+    return result;
+  }
+
+  /**
+   * Revoke sponsorship for a wallet using the new revokeSponsorship method.
+   * Validates that the sponsored account can cover its own reserve before revoking.
+   * Requires SPONSOR_SECRET to be configured.
+   *
+   * @param {string} id         - Wallet ID
+   * @param {string} [entryType='account'] - Entry type to revoke
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   * @throws {ValidationError} If SPONSOR_SECRET not configured, service unavailable,
+   *                           or account cannot cover its own reserve
+   * @throws {NotFoundError} If wallet not found
+   */
+  async revokeSponsorship(id, entryType = 'account') {
+    const wallet = this.getWalletById(id);
+    if (!process.env.SPONSOR_SECRET) {
+      throw new ValidationError('SPONSOR_SECRET is not configured', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    // Check the account can cover its own reserve (minimum 1 XLM base reserve)
+    let balance = 0;
+    try {
+      const balanceData = await this.stellarService.getBalance(wallet.address);
+      balance = parseFloat(balanceData.balance || balanceData.xlm || 0);
+    } catch (_) { /* account may not exist on-chain yet */ }
+
+    const MIN_RESERVE = parseFloat(process.env.MIN_RESERVE_XLM || '1');
+    if (balance < MIN_RESERVE) {
+      const err = new ValidationError(
+        `Account balance (${balance} XLM) is below the minimum reserve (${MIN_RESERVE} XLM) required to cover its own reserve`,
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const result = await this.stellarService.revokeSponsorship(
+      process.env.SPONSOR_SECRET,
+      wallet.address,
+      entryType
+    );
+    Wallet.update(id, { sponsored: false, sponsorshipRevokedAt: new Date().toISOString() });
+    return result;
+  }
+
+  /**
+   * Get the current sponsorship status for a wallet.
+   *
+   * @param {string} id - Wallet ID
+   * @returns {Promise<{sponsored: boolean, sponsoredBy: string|null}>}
+   * @throws {NotFoundError} If wallet not found
+   */
+  async getSponsorshipStatus(id) {
+    const wallet = this.getWalletById(id);
+    if (!this.stellarService) {
+      return { sponsored: false, sponsoredBy: null };
+    }
+    return this.stellarService.getSponsorshipStatus(wallet.address);
+  }
+
+  /**
    * Set or update an account data entry
    * @param {string|number} walletId - Wallet ID
    * @param {string} secretKey - Secret key of the wallet owner
