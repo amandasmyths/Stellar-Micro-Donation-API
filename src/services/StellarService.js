@@ -2095,75 +2095,88 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
-   * Simulate a Stellar transaction without submitting it to the network.
+   * Sponsor a new account's base reserve using beginSponsoringFutureReserves
+   * and endSponsoringFutureReserves operations.
    *
-   * Parses the provided XDR envelope, loads the source account from Horizon,
-   * and validates fee, sequence number, and source account balance.
-   * No transaction is ever submitted — `submitTransaction` is never called.
-   *
-   * @param {string} txEnvelope - Base64-encoded XDR transaction envelope.
-   * @returns {Promise<{
-   *   estimated_fee: string,
-   *   sequence_validity: boolean,
-   *   source_account_balance_status: string,
-   *   operation_validity: boolean,
-   *   simulation_note: string
-   * }>}
-   * @throws {Error} If SIMULATION_ENABLED feature flag is false or the envelope is invalid.
+   * @param {string} sponsorSecret        - Secret key of the sponsoring account
+   * @param {string} newAccountPublicKey  - Public key of the account to sponsor
+   * @returns {Promise<{transactionId: string, ledger: number, sponsored: true}>}
    */
-  async simulateTransaction(txEnvelope) {
-    if (process.env.SIMULATION_ENABLED === 'false') {
-      const err = new Error('Simulation Disabled');
-      err.code = 'SIMULATION_DISABLED';
-      throw err;
-    }
+  async sponsorAccount(sponsorSecret, newAccountPublicKey) {
+    return this._executeWithRetry(async () => {
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const sponsorPublic = sponsorKeypair.publicKey();
+      const account = await this.server.loadAccount(sponsorPublic);
 
-    return StellarErrorHandler.wrap(async () => {
-      let tx;
-      try {
-        tx = StellarSdk.TransactionBuilder.fromXDR(txEnvelope, this.networkPassphrase);
-      } catch (_e) {
-        const err = new Error('Invalid transaction envelope XDR');
-        err.code = 'INVALID_XDR';
-        throw err;
-      }
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.beginSponsoringFutureReserves({
+          sponsoredId: newAccountPublicKey,
+        }))
+        .addOperation(StellarSdk.Operation.createAccount({
+          destination: newAccountPublicKey,
+          startingBalance: '0',
+          source: sponsorPublic,
+        }))
+        .addOperation(StellarSdk.Operation.endSponsoringFutureReserves({
+          source: newAccountPublicKey,
+        }))
+        .setTimeout(30)
+        .build();
 
-      const sourcePublicKey = tx.source;
-      const txFeeStroops = parseInt(tx.fee, 10);
-      const txSequence = BigInt(tx.sequence);
+      const newKeypair = StellarSdk.Keypair.fromPublicKey(newAccountPublicKey);
+      transaction.sign(sponsorKeypair, newKeypair);
 
-      // Load source account from Horizon (read-only)
-      let account;
-      try {
-        account = await this._executeWithRetry(
-          () => this.server.loadAccount(sourcePublicKey),
-          'simulateTransaction_loadAccount'
-        );
-      } catch (loadErr) {
-        const err = new Error('Source account not found on network');
-        err.code = 'ACCOUNT_NOT_FOUND';
-        throw err;
-      }
+      const result = await this.server.submitTransaction(transaction);
+      return { transactionId: result.hash, ledger: result.ledger, sponsored: true };
+    }, 'sponsorAccount');
+  }
 
-      const accountSequence = BigInt(account.sequenceNumber());
-      const sequenceValid = txSequence === accountSequence + 1n;
+  /**
+   * Revoke sponsorship for an account entry.
+   *
+   * @param {string} sponsorSecret      - Secret key of the current sponsor
+   * @param {string} targetPublicKey    - Public key of the sponsored account
+   * @param {string} [entryType='account'] - Entry type: 'account' | 'trustline' | 'data'
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   */
+  async revokeSponsorship(sponsorSecret, targetPublicKey, entryType = 'account') {
+    return this._executeWithRetry(async () => {
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const account = await this.server.loadAccount(sponsorKeypair.publicKey());
 
-      const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-      const balanceXLM = parseFloat(nativeBalance ? nativeBalance.balance : '0');
-      const feeXLM = txFeeStroops / 1e7;
-      const balanceStatus = balanceXLM >= feeXLM + 1.0 ? 'sufficient' : 'insufficient';
+      const op = StellarSdk.Operation.revokeSponsorship({
+        type: entryType,
+        account: targetPublicKey,
+      });
 
-      const operationCount = tx.operations.length;
-      const operationValid = operationCount > 0;
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(op)
+        .setTimeout(30)
+        .build();
 
-      return {
-        estimated_fee: (txFeeStroops / 1e7).toFixed(7),
-        sequence_validity: sequenceValid,
-        source_account_balance_status: balanceStatus,
-        operation_validity: operationValid,
-        simulation_note: 'Dry-run only. Results are estimates. No transaction was submitted. Secret keys are not required.',
-      };
-    }, 'simulateTransaction');
+      transaction.sign(sponsorKeypair);
+
+      const result = await this.server.submitTransaction(transaction);
+      return { transactionId: result.hash, ledger: result.ledger, revoked: true };
+    }, 'revokeSponsorship');
+  }
+
+  /**
+   * Check the sponsorship status of an account by inspecting its Horizon record.
+   *
+   * @param {string} publicKey - Public key of the account to check
+   * @returns {Promise<{sponsored: boolean, sponsoredBy: string|null}>}
+   */
+  async getSponsorshipStatus(publicKey) {
+    const accountData = await this.server.loadAccount(publicKey);
+    const sponsoredBy = accountData.sponsor || null;
+    return { sponsored: !!sponsoredBy, sponsoredBy };
   }
 
 }
