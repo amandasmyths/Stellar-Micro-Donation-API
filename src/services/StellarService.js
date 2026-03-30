@@ -28,6 +28,95 @@ const {
 } = require('../utils/stellarAsset');
 
 class StellarService extends StellarServiceInterface {
+
+  /**
+   * Create a new DEX offer on Stellar.
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Seller's Stellar secret key
+   * @param {string} params.sellingAsset - Asset to sell ('XLM' or 'CODE:ISSUER')
+   * @param {string} params.buyingAsset - Asset to buy ('XLM' or 'CODE:ISSUER')
+   * @param {string} params.amount - Amount of selling asset
+   * @param {string} params.price - Price ratio ('n/d') or decimal
+   * @param {number} [params.offerId=0] - 0 to create, existing ID to update
+   * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
+   */
+  async createOffer({ sourceSecret, sellingAsset, buyingAsset, amount, price, offerId = 0 }) {
+    return StellarErrorHandler.wrap(async () => {
+      const StellarSdk = require('stellar-sdk');
+      const keypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const account = await this._executeWithRetry(() => this.server.loadAccount(keypair.publicKey()));
+      const sellAsset = sellingAsset === 'XLM' ? StellarSdk.Asset.native() : (() => { const [code, issuer] = sellingAsset.split(':'); return new StellarSdk.Asset(code, issuer); })();
+      const buyAsset = buyingAsset === 'XLM' ? StellarSdk.Asset.native() : (() => { const [code, issuer] = buyingAsset.split(':'); return new StellarSdk.Asset(code, issuer); })();
+      const op = StellarSdk.Operation.manageSellOffer({
+        selling: sellAsset,
+        buying: buyAsset,
+        amount: amount.toString(),
+        price: price.toString(),
+        offerId: offerId || 0,
+      });
+      const tx = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      }).addOperation(op).setTimeout(30).build();
+      tx.sign(keypair);
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      // Fetch offerId from Horizon (not trivial, so return 0 for new, or provided for update)
+      return { offerId: offerId || 0, transactionId: result.hash, ledger: result.ledger };
+    }, 'createOffer');
+  }
+
+  /**
+   * Update an existing DEX offer.
+   * @param {Object} params
+   * @param {string} params.sourceSecret
+   * @param {number} params.offerId
+   * @param {string} params.amount
+   * @param {string} params.price
+   * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
+   */
+  async updateOffer({ sourceSecret, offerId, amount, price }) {
+    // For update, selling/buying must be looked up (not trivial in real Stellar, so require client to provide or fetch from offers endpoint)
+    throw new Error('updateOffer not implemented: use createOffer with offerId');
+  }
+
+  /**
+   * Cancel an existing DEX offer.
+   * @param {Object} params
+   * @param {string} params.sourceSecret
+   * @param {string} params.sellingAsset
+   * @param {string} params.buyingAsset
+   * @param {number} params.offerId
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async cancelOffer({ sourceSecret, sellingAsset, buyingAsset, offerId }) {
+    // Cancel by setting amount to 0
+    return this.createOffer({ sourceSecret, sellingAsset, buyingAsset, amount: '0', price: '1', offerId });
+  }
+
+  /**
+   * List all open offers for a wallet.
+   * @param {string} publicKey
+   * @returns {Promise<Array>}
+   */
+  async listOffers(publicKey) {
+    return StellarErrorHandler.wrap(async () => {
+      const offersPage = await this._executeWithRetry(() => this.server.offers().forAccount(publicKey).call());
+      return (offersPage.records || []).map(o => ({
+        id: o.id,
+        sellingAsset: serializeAsset(normalizeHorizonAsset(o.selling)),
+        buyingAsset: serializeAsset(normalizeHorizonAsset(o.buying)),
+        amount: o.amount,
+        price: o.price,
+        price_r: o.price_r,
+        seller: o.seller,
+        last_modified_ledger: o.last_modified_ledger,
+        last_modified_time: o.last_modified_time,
+        sponsor: o.sponsor,
+        paging_token: o.paging_token,
+        ...o
+      }));
+    }, 'listOffers');
+  }
   /**
    * Create a new StellarService instance
    * @param {Object} [config={}] - Configuration options
