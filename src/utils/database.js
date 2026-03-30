@@ -874,11 +874,9 @@ class Database {
    * @private
    */
   static _startHealthCheck() {
-    if (this._healthCheckTimer)  skip: (req) => {
-    return process.env.NODE_ENV === 'test' || (req.idempotency && req.idempotency.cached);
-  },
-  validate: false
-});  
+    if (this._healthCheckTimer) return;
+    if (process.env.NODE_ENV === 'test') return;
+    
     this._healthCheckTimer = setInterval(() => {
       this._runHealthCheck().catch(() => {});
     }, HEALTH_CHECK_INTERVAL_MS);
