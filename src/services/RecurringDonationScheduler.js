@@ -276,7 +276,6 @@ class RecurringDonationScheduler {
           correlationId,
           traceId,
         });
-        this.logFailure('PROCESS_SCHEDULES', null, error.message);
       }
       }); // end runWithTrace
     });
