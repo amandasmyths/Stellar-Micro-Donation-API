@@ -22,6 +22,13 @@ const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
 const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
 const {
+  recurringDonationsDueTotal,
+  recurringDonationsExecutedTotal,
+  recurringDonationsExecutionDuration,
+  recurringDonationsSuspendedTotal,
+  recurringDonationsActiveCount,
+} = require('../utils/metrics');
+const {
   withBackgroundContext,
   withAsyncContext,
   getCorrelationSummary,
@@ -276,6 +283,22 @@ class RecurringDonationScheduler {
           });
         }
 
+        // Track how many schedules are due this tick
+        if (dueSchedules.length > 0) {
+          recurringDonationsDueTotal.inc(dueSchedules.length);
+        }
+
+        // Update active schedule gauge
+        try {
+          const activeResult = await Database.get(
+            `SELECT COUNT(*) AS count FROM recurring_donations WHERE status = ?`,
+            [SCHEDULE_STATUS.ACTIVE]
+          );
+          recurringDonationsActiveCount.set(activeResult ? activeResult.count : 0);
+        } catch (_gaugeErr) {
+          // non-critical — don't let gauge failure break the scheduler
+        }
+
         const promises = dueSchedules
           .filter((schedule) => !this.executingSchedules.has(schedule.id))
           .map((schedule) => this.executeScheduleWithRetry(schedule));
@@ -402,6 +425,7 @@ class RecurringDonationScheduler {
   async executeSchedule(schedule) {
     return withAsyncContext('execute_schedule', async () => {
       const { correlationId, traceId } = getCorrelationSummary();
+      const endTimer = recurringDonationsExecutionDuration.startTimer();
 
       try {
         // 1. Generate deterministic idempotency key for this execution cycle
@@ -488,6 +512,9 @@ class RecurringDonationScheduler {
           traceId,
         });
 
+        recurringDonationsExecutedTotal.inc({ status: 'success' });
+        endTimer();
+
         // Publish GraphQL subscription event
         const pubsub = require('../graphql/pubsub');
         pubsub.publish(pubsub.TOPICS.RECURRING_DONATION_EXECUTED, {
@@ -502,6 +529,8 @@ class RecurringDonationScheduler {
 
         await this.logExecution(schedule.id, 'SUCCESS', txResult.hash, null, 1);
       } catch (error) {
+        recurringDonationsExecutedTotal.inc({ status: 'failure' });
+        endTimer();
         await this.logExecution(schedule.id, 'FAILED', null, error.message, 1);
         throw error;
       }
@@ -532,6 +561,8 @@ class RecurringDonationScheduler {
         correlationId,
         traceId,
       });
+
+      recurringDonationsSuspendedTotal.inc();
 
       // Persist failure info
       try {
