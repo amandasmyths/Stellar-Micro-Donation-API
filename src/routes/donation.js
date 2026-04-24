@@ -493,6 +493,23 @@ router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamS
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
     }
 
+    // ETag and conditional request support (#751)
+    const lastModifiedDate = new Date(transaction.statusUpdatedAt || transaction.timestamp);
+    const etag = `"${transaction.id}-${lastModifiedDate.getTime()}"`;
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', lastModifiedDate.toUTCString());
+    res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
+
+    if (req.headers['if-none-match'] === etag) {
+      return res.status(304).end();
+    }
+    if (req.headers['if-modified-since']) {
+      const ifModifiedSince = new Date(req.headers['if-modified-since']);
+      if (!isNaN(ifModifiedSince.getTime()) && lastModifiedDate <= ifModifiedSince) {
+        return res.status(304).end();
+      }
+    }
+
     // HTTP/2 server push + Link header for related resources
     const { pushDonationRelated } = require('../utils/pushHelper');
     pushDonationRelated(req, res, transaction);

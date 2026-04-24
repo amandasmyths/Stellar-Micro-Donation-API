@@ -332,6 +332,24 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, ca
     if (!wallet) {
       return res.status(404).json({ success: false, error: 'Wallet not found' });
     }
+
+    // ETag and conditional request support (#751)
+    const lastModifiedDate = new Date(wallet.updatedAt || wallet.createdAt);
+    const etag = `"${wallet.id}-${lastModifiedDate.getTime()}"`;
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', lastModifiedDate.toUTCString());
+    res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
+
+    if (req.headers['if-none-match'] === etag) {
+      return res.status(304).end();
+    }
+    if (req.headers['if-modified-since']) {
+      const ifModifiedSince = new Date(req.headers['if-modified-since']);
+      if (!isNaN(ifModifiedSince.getTime()) && lastModifiedDate <= ifModifiedSince) {
+        return res.status(304).end();
+      }
+    }
+
     const stellarSvc = getStellarService();
     const homeDomain = await stellarSvc.getHomeDomain(wallet.address || wallet.publicKey).catch(() => null);
     res.json({ success: true, data: { ...wallet, homeDomain: homeDomain || null } });
