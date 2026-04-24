@@ -18,7 +18,8 @@ const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const { sanitizeIdentifier, sanitizeMemo } = require('../utils/sanitizer');
 const { generatePseudonymousId } = require('../utils/anonymization');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
+const { withTimeout } = require('../utils/timeoutHandler');
 const { PREDEFINED_TAGS } = require('../constants/tags');
 const { paginateCollection } = require('../utils/pagination');
 const { checkConfirmations } = require('../utils/confirmationChecker');
@@ -141,6 +142,28 @@ class DonationService {
 
     // Decrypt sender's secret key
     const secret = encryption.decrypt(sender.encryptedSecret);
+
+    // Check sender balance before submitting (max 2s to avoid slowing donation flow)
+    try {
+      const { balance } = await withTimeout(
+        this.stellarService.getBalance(sender.publicKey),
+        2000,
+        'balanceCheck'
+      );
+      const available = parseFloat(balance);
+      const reserve = parseFloat(process.env.STELLAR_BASE_RESERVE || '1');
+      const required = parseFloat(amount) + reserve;
+      if (available < required) {
+        throw new BusinessLogicError(
+          ERROR_CODES.INSUFFICIENT_BALANCE,
+          `Insufficient balance. Required: ${required.toFixed(7)} XLM, Available: ${available.toFixed(7)} XLM`
+        );
+      }
+    } catch (err) {
+      if (err instanceof BusinessLogicError) throw err;
+      // Balance check timed out or failed — log and proceed optimistically
+      log.warn('DONATION_SERVICE', 'Balance check skipped', { requestId, error: err.message });
+    }
 
     log.debug('DONATION_SERVICE', 'Initiating Stellar transaction', {
       requestId

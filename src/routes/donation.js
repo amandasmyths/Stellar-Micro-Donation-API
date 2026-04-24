@@ -184,6 +184,7 @@ const { parseCursorPaginationQuery } = require('../utils/pagination');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { parseAssetInput } = require('../utils/stellarAsset');
 
+const asyncHandler = require('../utils/asyncHandler');
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
 const { calculateCostBreakdown } = require('../utils/costBreakdown');
@@ -193,7 +194,7 @@ const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
-const donationService = new DonationService();
+const donationService = new DonationService(getStellarService());
 
 const donationIdParamSchema = validateSchema({
   params: {
