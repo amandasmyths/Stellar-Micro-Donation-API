@@ -34,6 +34,7 @@ const featureFlagsAdminRoutes = require('./admin/featureFlags');
 const createFeeBumpRouter = require('./admin/feeBump');
 const dbAdminRoutes = require('./admin/db');
 const adminTracesRoutes = require('./admin/traces');
+const systemInfoRoutes = require('./admin/systemInfo');
 const retentionAdminRoutes = require('./admin/retention');
 const backupAdminRoutes = require('./admin/backup');
 const encryptionAdminRoutes = require('./admin/encryption');
@@ -457,6 +458,9 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
 
 // Circuit breaker admin endpoints (issue #736)
 app.use('/admin/circuit-breaker', requireApiKey, require('./admin/circuitBreaker'));
+
+// System info endpoint (issue #803)
+app.use('/admin/system/info', requireApiKey, systemInfoRoutes);
 
 // Database monitoring admin endpoints
 app.use('/admin/db', requireApiKey, dbAdminRoutes);
