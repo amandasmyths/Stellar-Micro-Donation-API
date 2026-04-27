@@ -1615,4 +1615,30 @@ router.get('/:id/certificate/ipfs', checkPermission(PERMISSIONS.DONATIONS_READ),
   }
 }));
 
+/**
+ * GET /donations/limits
+ * Return the configured minimum and maximum donation amounts.
+ * Response is cached for 1 hour (Cache-Control: public, max-age=3600).
+ * ETag is derived from the config values so it changes when config changes.
+ */
+router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
+  const config = require('../config');
+  const crypto = require('crypto');
+  const { minAmount, maxAmount, maxDailyPerDonor } = config.donations;
+
+  const limitsData = { minAmount, maxAmount, maxDailyPerDonor, currency: 'XLM' };
+  const etag = `"${crypto.createHash('sha256').update(JSON.stringify(limitsData)).digest('hex').slice(0, 32)}"`;
+
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('ETag', etag);
+
+  // Conditional GET support
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch && (ifNoneMatch === etag || ifNoneMatch === '*')) {
+    return res.status(304).end();
+  }
+
+  return res.json({ success: true, data: limitsData });
+});
+
 module.exports = router;
