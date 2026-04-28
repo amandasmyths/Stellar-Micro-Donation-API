@@ -383,5 +383,67 @@ module.exports = {
         }
       });
     }
+  statsRateLimiter: rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => {
+      const identifier = (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy)
+        ? `key:${req.apiKey.id}`
+        : `ip:${req.ip}`;
+      return `rate_limit:${identifier}:stats`;
+    },
+    message: {
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many stats requests. Please try again later.',
+      }
+    },
+    standardHeaders: true,
+    legacyHeaders: true,
+    validate: false,
+    handler: (req, res) => {
+      const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+      const retryAfter = Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000);
+
+      AuditLogService.log({
+        category: AuditLogService.CATEGORY.RATE_LIMITING,
+        action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'FAILURE',
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        reason: 'Stats rate limit exceeded',
+        details: {
+          limit: 30,
+          window: '60s',
+          limitedBy: isKeyBased ? 'api-key' : 'ip',
+          resetTime: req.rateLimit.resetTime
+        }
+      }).catch(err => {
+        console.error('Audit log failed:', err);
+      });
+
+      res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+      res.set('Retry-After', String(retryAfter));
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: isKeyBased
+            ? 'Too many stats requests for this API key. Please try again later.'
+            : 'Too many stats requests from this IP. Please try again later.',
+          retryAfter,
+          limitedBy: isKeyBased ? 'api-key' : 'ip',
+        }
+      });
+    },
+    skip: (req, res) => {
+      const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+      res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+      return false;
+    },
   }),
 };
+

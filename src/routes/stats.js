@@ -78,46 +78,51 @@ const asyncHandler = require('../utils/asyncHandler');
 const { cacheMiddleware } = require('../middleware/caching');
 const Cache = require('../utils/cache');
 const { isValidStellarPublicKey } = require('../utils/validators');
+const { statsRateLimiter } = require('../middleware/rateLimiter');
 
 // Stats cache TTL in milliseconds — configurable via STATS_CACHE_TTL_SECONDS env var (default: 60s)
 const STATS_CACHE_TTL_MS = parseInt(process.env.STATS_CACHE_TTL_SECONDS || '60', 10) * 1000;
 
 /**
- * Wrap a stats handler with server-side in-memory caching.
- * Sets X-Cache-Age header and uses Cache.get/set with the given prefix + cache key.
- *
- * @param {string} prefix - Cache key prefix (e.g. 'stats:daily')
- * @param {Function} dataFn - Function that returns the response body object
- * @returns {import('express').RequestHandler}
+ * Global stats caching middleware.
+ * Caches responses per API key, endpoint, and query parameters.
  */
-function withStatsCache(prefix, dataFn) {
-  return (req, res, next) => {
-    try {
-      const cacheKey = `${prefix}:${JSON.stringify(req.query)}`;
-      const cached = Cache.get(cacheKey);
+function globalStatsCache(req, res, next) {
+  if (req.method !== 'GET') {
+    return next();
+  }
 
-      if (cached) {
-        const ageSeconds = Math.floor((Date.now() - cached.cachedAt) / 1000);
-        res.setHeader('X-Cache-Age', String(ageSeconds));
-        return res.json(cached.body);
-      }
+  try {
+    const apiKeyId = (req.apiKey && req.apiKey.id) ? req.apiKey.id : req.ip;
+    const endpoint = req.path;
+    const cacheKey = `stats_cache:${apiKeyId}:${endpoint}:${JSON.stringify(req.query)}`;
+    const cached = Cache.get(cacheKey);
 
-      // Intercept res.json to store result in cache
-      const originalJson = res.json.bind(res);
-      res.json = function (body) {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          Cache.set(cacheKey, { body, cachedAt: Date.now() }, STATS_CACHE_TTL_MS);
-          res.setHeader('X-Cache-Age', '0');
-        }
-        return originalJson(body);
-      };
-
-      dataFn(req, res, next);
-    } catch (error) {
-      next(error);
+    if (cached) {
+      const ageSeconds = Math.floor((Date.now() - cached.cachedAt) / 1000);
+      res.setHeader('X-Cache-Age', String(ageSeconds));
+      return res.json(cached.body);
     }
-  };
+
+    // Intercept res.json to store result in cache
+    const originalJson = res.json.bind(res);
+    res.json = function (body) {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        Cache.set(cacheKey, { body, cachedAt: Date.now() }, STATS_CACHE_TTL_MS);
+        res.setHeader('X-Cache-Age', '0');
+      }
+      return originalJson(body);
+    };
+
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
+
+// Apply globally to all stats routes
+router.use(statsRateLimiter);
+router.use(globalStatsCache);
 
 /** Fire-and-forget audit log for stats data access */
 function auditStatsAccess(req, res, next) {
@@ -215,7 +220,7 @@ router.get('/tags', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, s
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, cacheMiddleware('stats', 'private'), strictDateRangeQuerySchema, validateDateRange, withStatsCache('stats:daily', (req, res, next) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, cacheMiddleware('stats', 'private'), strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -250,7 +255,7 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, 
   } catch (error) {
     next(error);
   }
-}));
+});
 
 /**
  * GET /stats/weekly
@@ -264,7 +269,7 @@ router.get(
   cacheMiddleware('stats', 'private'),
   strictDateRangeQuerySchema,
   validateDateRange,
-  withStatsCache('stats:weekly', (req, res, next) => {
+  (req, res, next) => {
     try {
       const { startDate, endDate } = req.query;
       const start = new Date(startDate);
@@ -287,7 +292,7 @@ router.get(
     } catch (error) {
       next(error);
     }
-  }),
+  }
 );
 
 /**
@@ -301,7 +306,7 @@ router.get(
   auditStatsAccess,
   cacheMiddleware('stats', 'private'),
   optionalDateRangeQuerySchema,
-  withStatsCache('stats:summary', (req, res, next) => {
+  (req, res, next) => {
     try {
       const fromParam = req.query.from || req.query.startDate;
       const toParam = req.query.to || req.query.endDate;
@@ -335,7 +340,7 @@ router.get(
     } catch (error) {
       next(error);
     }
-  }),
+  }
 );
 
 /**
@@ -646,6 +651,7 @@ router.get('/anonymous-breakdown', checkPermission(PERMISSIONS.STATS_READ), (req
  */
 router.post('/cache/invalidate', checkPermission(PERMISSIONS.STATS_ADMIN), (req, res) => {
   Cache.clearPrefix('stats:');
+  Cache.clearPrefix('stats_cache:');
   Cache.clearPrefix('dashboard:');
   res.json({ success: true, message: 'Stats cache invalidated' });
 });
