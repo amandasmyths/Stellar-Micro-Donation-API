@@ -50,14 +50,11 @@ async function runMigrations() {
   }
 
   for (const { file, migration } of pending) {
-    await db.run('BEGIN');
     try {
       await migration.up(db);
       await db.run('INSERT INTO schema_migrations (name) VALUES (?)', [migration.name]);
-      await db.run('COMMIT');
       console.log(`✓ Migration applied: ${migration.name} (${file})`);
     } catch (err) {
-      await db.run('ROLLBACK');
       throw new Error(`Migration failed [${migration.name}]: ${err.message}`);
     }
   }

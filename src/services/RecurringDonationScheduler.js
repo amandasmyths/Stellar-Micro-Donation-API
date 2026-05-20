@@ -217,7 +217,9 @@ class RecurringDonationScheduler {
       return;
     }
 
-    const correlation = getCorrelationSummary();
+    const { correlationId, traceId } = getCorrelationSummary();
+    const _tickStart = Date.now();
+    let _tickFailedSchedules = 0;
 
     try {
       const now = new Date().toISOString();
@@ -232,6 +234,10 @@ class RecurringDonationScheduler {
           rd.nextExecutionDate,
           rd.executionCount,
           rd.lastExecutionDate,
+          rd.maxExecutions,
+          rd.customIntervalDays,
+          rd.webhookUrl,
+          rd.failureCount,
           donor.publicKey as donorPublicKey,
           recipient.publicKey as recipientPublicKey
          FROM recurring_donations rd
@@ -245,39 +251,12 @@ class RecurringDonationScheduler {
       if (dueSchedules.length > 0) {
         log.info("RECURRING_SCHEDULER", "Found due schedules for execution", {
           count: dueSchedules.length,
-          correlationId: correlation.correlationId,
-          traceId: correlation.traceId,
+          correlationId,
+          traceId,
         });
-      }
-
-      const promises = dueSchedules
-        .filter((schedule) => !this.executingSchedules.has(schedule.id))
-        .map((schedule) => this.executeScheduleWithRetry(schedule));
-
-      await Promise.allSettled(promises);
-
-      // Auto-revoke deprecated API keys whose grace period has elapsed
-      try {
-        const revokedCount = await revokeExpiredDeprecatedKeys();
-        if (revokedCount > 0) {
-          log.info('RECURRING_SCHEDULER', 'Auto-revoked expired deprecated API keys', { revokedCount });
-        }
 
         // Track how many schedules are due this tick
-        if (dueSchedules.length > 0) {
-          recurringDonationsDueTotal.inc(dueSchedules.length);
-        }
-
-        // Update active schedule gauge
-        try {
-          const activeResult = await Database.get(
-            `SELECT COUNT(*) AS count FROM recurring_donations WHERE status = ?`,
-            [SCHEDULE_STATUS.ACTIVE]
-          );
-          recurringDonationsActiveCount.set(activeResult ? activeResult.count : 0);
-        } catch (_gaugeErr) {
-          // non-critical — don't let gauge failure break the scheduler
-        }
+        recurringDonationsDueTotal.inc(dueSchedules.length);
 
         const promises = dueSchedules
           .filter((schedule) => !this.executingSchedules.has(schedule.id))
@@ -285,65 +264,76 @@ class RecurringDonationScheduler {
 
         const results = await Promise.allSettled(promises);
         _tickFailedSchedules = results.filter(r => r.status === 'rejected').length;
+      }
 
-        // Auto-revoke deprecated API keys whose grace period has elapsed
-        try {
-          const revokedCount = await revokeExpiredDeprecatedKeys();
-          if (revokedCount > 0) {
-            log.info('RECURRING_SCHEDULER', 'Auto-revoked expired deprecated API keys', { revokedCount });
-          }
-        } catch (revokeError) {
-          log.error('RECURRING_SCHEDULER', 'Failed to auto-revoke expired API keys', { error: revokeError.message });
+      // 1. Update active schedule gauge
+      try {
+        const activeResult = await Database.get(
+          `SELECT COUNT(*) AS count FROM recurring_donations WHERE status = ?`,
+          [SCHEDULE_STATUS.ACTIVE]
+        );
+        recurringDonationsActiveCount.set(activeResult ? activeResult.count : 0);
+      } catch (_gaugeErr) {
+        // non-critical — don't let gauge failure break the scheduler
+      }
+
+      // 2. Auto-revoke deprecated API keys whose grace period has elapsed
+      try {
+        const revokedCount = await revokeExpiredDeprecatedKeys();
+        if (revokedCount > 0) {
+          log.info('RECURRING_SCHEDULER', 'Auto-revoked expired deprecated API keys', { revokedCount });
         }
+      } catch (revokeError) {
+        log.error('RECURRING_SCHEDULER', 'Failed to auto-revoke expired API keys', { error: revokeError.message });
+      }
 
-        // Send expiry notifications for keys approaching or past their expiration date
+      // 3. Send expiry notifications for keys approaching or past their expiration date
+      try {
+        await ApiKeyExpirationNotifier.run();
+      } catch (notifyError) {
+        log.error('RECURRING_SCHEDULER', 'API key expiry notification job failed', { error: notifyError.message });
+      }
+
+      // 4. Run data retention job once per cleanupInterval
+      const nowTs = Date.now();
+      if (!this.lastCleanupAt || nowTs - this.lastCleanupAt >= (this.cleanupInterval || 24 * 60 * 60 * 1000)) {
+        this.lastCleanupAt = nowTs;
         try {
-          await ApiKeyExpirationNotifier.run();
-        } catch (notifyError) {
-          log.error('RECURRING_SCHEDULER', 'API key expiry notification job failed', { error: notifyError.message });
-        }
-
-        // Run data retention job once per cleanupInterval
-        const now2 = Date.now();
-        if (now2 - this.lastCleanupAt >= this.cleanupInterval) {
-          this.lastCleanupAt = now2;
-          try {
-            const retentionService = require('./RetentionService');
+          const retentionService = require('./RetentionService');
+          if (retentionService && retentionService.runAll) {
             await retentionService.runAll();
-          } catch (retentionError) {
-            log.error('RECURRING_SCHEDULER', 'Retention job failed', { error: retentionError.message });
           }
+        } catch (retentionError) {
+          // Retention service might not exist yet or fail - log and continue
+          log.debug('RECURRING_SCHEDULER', 'Retention job skipped or failed', { error: retentionError.message });
         }
+      }
 
-        // Run scheduled database backup once per backupInterval
-        if (now2 - this.lastBackupAt >= this.backupInterval) {
-          this.lastBackupAt = now2;
-          try {
-            const BackupService = require('./BackupService');
+      // 5. Run scheduled database backup once per backupInterval
+      if (nowTs - this.lastBackupAt >= this.backupInterval) {
+        this.lastBackupAt = nowTs;
+        try {
+          const BackupService = require('./BackupService');
+          if (BackupService) {
             const backupService = new BackupService();
             const result = await backupService.backup();
             log.info('RECURRING_SCHEDULER', 'Scheduled backup completed', { backupId: result.backupId });
-          } catch (backupError) {
-            log.error('RECURRING_SCHEDULER', 'Scheduled backup failed', { error: backupError.message });
           }
+        } catch (backupError) {
+          log.debug('RECURRING_SCHEDULER', 'Scheduled backup skipped or failed', { error: backupError.message });
         }
-      } catch (error) {
-        log.error('RECURRING_SCHEDULER', 'Error processing schedules', {
-          error: error.message,
-          correlationId,
-          traceId,
-        });
-      } finally {
-        this.lastTickAt = new Date().toISOString();
-        this.lastTickDurationMs = Date.now() - _tickStart;
-        this.lastTickFailedSchedules = _tickFailedSchedules;
       }
+
     } catch (outerError) {
       log.error('RECURRING_SCHEDULER', 'Unexpected error in processSchedules', {
         error: outerError.message,
-        correlationId: correlation.correlationId,
-        traceId: correlation.traceId,
+        correlationId,
+        traceId,
       });
+    } finally {
+      this.lastTickAt = new Date().toISOString();
+      this.lastTickDurationMs = Date.now() - _tickStart;
+      this.lastTickFailedSchedules = _tickFailedSchedules;
     }
   }
 

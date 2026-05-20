@@ -383,6 +383,7 @@ module.exports = {
         }
       });
     }
+  }),
   statsRateLimiter: rateLimit({
     windowMs: 60 * 1000,
     max: 30,

@@ -697,7 +697,7 @@ async function startServer() {
           await loadFlagsFromEnv(process.env.FEATURE_FLAGS);
         }
 
-        await WebhookService.initTable();
+        await WebhookService.WebhookService.initTable();
         await validateRBAC();
 
         // Only start background workers and jobs if not in test environment
@@ -721,7 +721,7 @@ async function startServer() {
           log.warn('NETWORK_STATUS', 'Network status degraded', { status });
         });
         try {
-          await networkStatusService.initialize();
+          networkStatusService.start();
         } catch (err) {
           log.error('APP', 'Failed to initialize NetworkStatusService', { error: err.message });
         }
@@ -831,7 +831,7 @@ async function startServer() {
         }
         
         try {
-          await networkStatusService.shutdown();
+          networkStatusService.stop();
         } catch (err) {
           log.error("SHUTDOWN", "Error shutting down NetworkStatusService", { error: err.message });
         }
