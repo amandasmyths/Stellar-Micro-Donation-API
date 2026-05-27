@@ -420,12 +420,12 @@ router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
 
 /**
  * GET /wallets/:id
- * Get a specific wallet
+ * Get a specific wallet. Excludes soft-deleted wallets by default.
  */
 router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, cacheMiddleware('wallet', 'private'), asyncHandler(async (req, res, next) => {
   try {
     const wallet = await Database.get(
-      'SELECT id, publicKey, label, ownerName, createdAt FROM users WHERE id = ?',
+      'SELECT id, publicKey, label, ownerName, createdAt FROM users WHERE id = ? AND deleted_at IS NULL',
       [req.params.id]
     );
     if (!wallet) {
@@ -919,7 +919,8 @@ router.post('/:id/revoke-sponsorship', checkPermission(PERMISSIONS.WALLETS_UPDAT
 
 /**
  * DELETE /wallets/:id
- * Soft delete a wallet by setting deleted_at timestamp
+ * Soft delete a wallet by setting deleted_at timestamp.
+ * Returns 409 if the wallet has active recurring donation schedules.
  */
 router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
@@ -929,6 +930,22 @@ router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchem
     const wallet = await Database.get('SELECT id FROM users WHERE id = ? AND deleted_at IS NULL', [id]);
     if (!wallet) {
       throw new NotFoundError('Wallet not found or already deleted', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    // 409: block deletion if wallet has active recurring donation schedules
+    const activeSchedules = await Database.query(
+      `SELECT id FROM recurring_donations WHERE (donorId = ? OR recipientId = ?) AND status = 'active'`,
+      [id, id]
+    );
+    if (activeSchedules && activeSchedules.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'ACTIVE_SCHEDULES',
+          message: 'Cannot delete wallet with active recurring donation schedules',
+          activeScheduleIds: activeSchedules.map(s => s.id)
+        }
+      });
     }
 
     // Perform Soft Delete
@@ -971,6 +988,39 @@ router.get('/admin/deleted', requireAdmin(), asyncHandler(async (req, res, next)
         transactions: deletedTransactions
       }
     });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * POST /admin/wallets/:id/restore
+ * Admin only: Restore a soft-deleted wallet by clearing deleted_at
+ */
+router.post('/admin/wallets/:id/restore', requireAdmin(), walletIdSchema, asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const wallet = await Database.get('SELECT id FROM users WHERE id = ? AND deleted_at IS NOT NULL', [id]);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found or not deleted' });
+    }
+
+    await Database.run('UPDATE users SET deleted_at = NULL WHERE id = ?', [id]);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'WALLET_RESTORED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/admin/wallets/${id}/restore`,
+      details: { walletId: id }
+    });
+
+    res.json({ success: true, message: 'Wallet restored successfully' });
   } catch (error) {
     next(error);
   }

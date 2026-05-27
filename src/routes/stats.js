@@ -79,9 +79,19 @@ const { cacheMiddleware } = require('../middleware/caching');
 const Cache = require('../utils/cache');
 const { isValidStellarPublicKey } = require('../utils/validators');
 const { statsRateLimiter } = require('../middleware/rateLimiter');
+const donationEvents = require('../events/donationEvents');
 
 // Stats cache TTL in milliseconds — configurable via STATS_CACHE_TTL_SECONDS env var (default: 60s)
 const STATS_CACHE_TTL_MS = parseInt(process.env.STATS_CACHE_TTL_SECONDS || '60', 10) * 1000;
+
+// Summary cache TTL — configurable via STATS_SUMMARY_CACHE_TTL_SECONDS (default: 60s)
+const SUMMARY_CACHE_TTL_MS = parseInt(process.env.STATS_SUMMARY_CACHE_TTL_SECONDS || '60', 10) * 1000;
+const SUMMARY_CACHE_PREFIX = 'stats:summary:';
+
+// Invalidate all summary cache entries when a new donation is created
+donationEvents.on(donationEvents.EVENTS.CREATED, () => {
+  Cache.clearPrefix(SUMMARY_CACHE_PREFIX);
+});
 
 /**
  * Global stats caching middleware.
@@ -299,12 +309,16 @@ router.get(
  * GET /stats/summary
  * Get overall summary statistics
  * Query params: startDate/endDate or from/to (all optional, ISO format)
+ *
+ * Cached with TTL (STATS_SUMMARY_CACHE_TTL_SECONDS, default 60s).
+ * Cache key includes query parameters so different filter combinations are independent.
+ * Responds with X-Cache: HIT or X-Cache: MISS header.
+ * Cache is invalidated on donation.created events.
  */
 router.get(
   "/summary",
   checkPermission(PERMISSIONS.STATS_READ),
   auditStatsAccess,
-  cacheMiddleware('stats', 'private'),
   optionalDateRangeQuerySchema,
   (req, res, next) => {
     try {
@@ -331,12 +345,22 @@ router.get(
         end = new Date();
       }
 
-      const stats = StatsService.getSummaryStats(start, end);
+      // Build a stable cache key from query params
+      const cacheKey = `${SUMMARY_CACHE_PREFIX}${JSON.stringify(req.query)}`;
+      const cached = Cache.get(cacheKey);
 
-      res.json({
-        success: true,
-        data: stats,
-      });
+      if (cached) {
+        res.setHeader('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+
+      const stats = StatsService.getSummaryStats(start, end);
+      const body = { success: true, data: stats };
+
+      Cache.set(cacheKey, body, SUMMARY_CACHE_TTL_MS);
+      res.setHeader('X-Cache', 'MISS');
+
+      res.json(body);
     } catch (error) {
       next(error);
     }

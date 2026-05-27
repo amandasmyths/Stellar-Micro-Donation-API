@@ -1016,6 +1016,124 @@ router.post('/batch', requireApiKey, batchRateLimiter, checkPermission(PERMISSIO
 }));
 
 /**
+ * POST /donations/bulk
+ * Batch donation creation with 207 Multi-Status response.
+ * - Up to 50 items per request
+ * - Concurrent processing (BULK_DONATION_CONCURRENCY, default 5)
+ * - Per-item validation; failures don't block other items
+ * - Rate limiting counts each item against the per-key quota
+ * - Per-item idempotency keys via item.idempotencyKey
+ * - Requires donations:write permission
+ */
+router.post('/bulk', checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), asyncHandler(async (req, res, next) => {
+  try {
+    const { donations } = req.body || {};
+
+    if (!Array.isArray(donations)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PAYLOAD', message: "'donations' must be an array" } });
+    }
+    if (donations.length === 0 || donations.length > 50) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_BATCH_SIZE', message: 'Batch must contain 1–50 items' } });
+    }
+
+    // Rate-limit: consume one quota unit per item
+    const apiKeyId = req.apiKey?.id || req.ip;
+    const quotaKey = `bulk_donation_quota:${apiKeyId}`;
+    const windowMs = 60_000;
+    const maxPerWindow = 50;
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    if (!router._bulkQuota) router._bulkQuota = new Map();
+    const timestamps = (router._bulkQuota.get(quotaKey) || []).filter(t => t > windowStart);
+    if (timestamps.length + donations.length > maxPerWindow) {
+      return res.status(429).json({ success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Bulk donation quota exceeded (50 items/min)' } });
+    }
+    for (let i = 0; i < donations.length; i++) timestamps.push(now);
+    router._bulkQuota.set(quotaKey, timestamps);
+
+    const CONCURRENCY = parseInt(process.env.BULK_DONATION_CONCURRENCY || '5', 10);
+    const IdempotencyService = require('../services/IdempotencyService');
+    const idempotencySvc = new IdempotencyService();
+
+    // Process items in concurrent batches
+    const results = new Array(donations.length);
+
+    async function processItem(index) {
+      const item = donations[index];
+
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        results[index] = { index, status: 'failed', error: { code: 'INVALID_ITEM', message: 'Each item must be an object' } };
+        return;
+      }
+
+      // Per-item idempotency
+      const itemKey = item.idempotencyKey;
+      if (itemKey) {
+        try {
+          const cached = await idempotencySvc.get(itemKey);
+          if (cached) {
+            results[index] = { index, status: 'success', ...cached.response };
+            return;
+          }
+        } catch (_) {}
+      }
+
+      // Validate
+      const missing = [];
+      if (item.senderId == null) missing.push('senderId');
+      if (item.receiverId == null) missing.push('receiverId');
+      if (item.amount == null) missing.push('amount');
+      if (missing.length > 0) {
+        results[index] = { index, status: 'failed', error: { code: 'MISSING_FIELDS', message: `Missing: ${missing.join(', ')}` } };
+        return;
+      }
+
+      const senderVal = validateInteger(item.senderId, { min: 1 });
+      if (!senderVal.valid) { results[index] = { index, status: 'failed', error: { code: 'INVALID_SENDER_ID', message: senderVal.error } }; return; }
+
+      const receiverVal = validateInteger(item.receiverId, { min: 1 });
+      if (!receiverVal.valid) { results[index] = { index, status: 'failed', error: { code: 'INVALID_RECEIVER_ID', message: receiverVal.error } }; return; }
+
+      const amountVal = validateFloat(item.amount);
+      if (!amountVal.valid) { results[index] = { index, status: 'failed', error: { code: 'INVALID_AMOUNT', message: amountVal.error } }; return; }
+
+      try {
+        const result = await donationService.sendCustodialDonation({
+          senderId: senderVal.value,
+          receiverId: receiverVal.value,
+          amount: amountVal.value,
+          memo: item.memo || null,
+          notes: item.notes || null,
+          tags: item.tags || null,
+          apiKeyId: req.apiKey?.id,
+          requestId: req.id,
+        });
+        const itemResult = { index, status: 'success', donationId: result.id, transactionHash: result.transactionHash };
+        results[index] = itemResult;
+        if (itemKey) {
+          idempotencySvc.store(itemKey, null, itemResult).catch(() => {});
+        }
+      } catch (err) {
+        results[index] = { index, status: 'failed', error: { code: err.code || 'DONATION_FAILED', message: err.message || 'Donation failed' } };
+      }
+    }
+
+    // Run with concurrency limit
+    for (let i = 0; i < donations.length; i += CONCURRENCY) {
+      const chunk = [];
+      for (let j = i; j < Math.min(i + CONCURRENCY, donations.length); j++) {
+        chunk.push(processItem(j));
+      }
+      await Promise.all(chunk);
+    }
+
+    return res.status(207).json({ results });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * GET /donations
  * List all donations with optional pagination.
  */
