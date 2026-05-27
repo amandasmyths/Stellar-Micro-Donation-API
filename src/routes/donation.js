@@ -1750,4 +1750,139 @@ router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) =>
   return res.json({ success: true, data: limitsData });
 });
 
+/**
+ * GET /donations/stats/by-campaign
+ * Aggregate donation statistics per campaign.
+ * Supports date range filtering, sorting, and pagination.
+ * Results are cached for 60 seconds.
+ */
+router.get('/stats/by-campaign', checkPermission(PERMISSIONS.STATS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const { from, to, sort = 'totalRaised', order = 'desc', limit = 20, offset = 0 } = req.query;
+    
+    // Validate sort parameter
+    const validSortFields = ['totalRaised', 'donorCount', 'donationCount'];
+    if (!validSortFields.includes(sort)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_SORT',
+          message: `Invalid sort field. Valid options: ${validSortFields.join(', ')}`
+        }
+      });
+    }
+    
+    // Validate order parameter
+    const validOrders = ['asc', 'desc'];
+    if (!validOrders.includes(order.toLowerCase())) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ORDER',
+          message: 'Order must be "asc" or "desc"'
+        }
+      });
+    }
+    
+    // Parse and validate limit
+    const parsedLimit = Math.min(parseInt(limit, 10) || 20, 100);
+    const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+    
+    // Build query with optional date filtering
+    let query = `
+      SELECT
+        c.id as campaignId,
+        c.name as campaignName,
+        COALESCE(SUM(t.amount), 0) as totalRaised,
+        COUNT(DISTINCT t.senderId) as donorCount,
+        COUNT(t.id) as donationCount,
+        COALESCE(AVG(t.amount), 0) as averageDonation,
+        c.goal_amount as goalAmount,
+        CASE 
+          WHEN c.goal_amount > 0 THEN ROUND((COALESCE(SUM(t.amount), 0) / c.goal_amount) * 100, 2)
+          ELSE 0
+        END as percentComplete,
+        MIN(t.timestamp) as firstDonationAt,
+        MAX(t.timestamp) as lastDonationAt
+      FROM campaigns c
+      LEFT JOIN transactions t ON c.id = t.campaign_id
+    `;
+    
+    const params = [];
+    const conditions = [];
+    
+    // Add date range filtering
+    if (from) {
+      conditions.push('t.timestamp >= ?');
+      params.push(from);
+    }
+    if (to) {
+      conditions.push('t.timestamp <= ?');
+      params.push(to);
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    query += ` GROUP BY c.id, c.name, c.goal_amount`;
+    query += ` HAVING COUNT(t.id) > 0`; // Exclude campaigns with zero donations
+    
+    // Map sort field to column name
+    const sortColumnMap = {
+      'totalRaised': 'totalRaised',
+      'donorCount': 'donorCount',
+      'donationCount': 'donationCount'
+    };
+    
+    query += ` ORDER BY ${sortColumnMap[sort]} ${order.toUpperCase()}`;
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(parsedLimit, parsedOffset);
+    
+    const data = await Database.query(query, params);
+    
+    // Get total count for pagination
+    let countQuery = `
+      SELECT COUNT(DISTINCT c.id) as total
+      FROM campaigns c
+      LEFT JOIN transactions t ON c.id = t.campaign_id
+    `;
+    
+    const countParams = [];
+    const countConditions = [];
+    
+    if (from) {
+      countConditions.push('t.timestamp >= ?');
+      countParams.push(from);
+    }
+    if (to) {
+      countConditions.push('t.timestamp <= ?');
+      countParams.push(to);
+    }
+    
+    if (countConditions.length > 0) {
+      countQuery += ' WHERE ' + countConditions.join(' AND ');
+    }
+    
+    countQuery += ` GROUP BY c.id HAVING COUNT(t.id) > 0`;
+    
+    const countResult = await Database.query(countQuery, countParams);
+    const total = countResult.length;
+    
+    // Set cache headers
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    
+    res.json({
+      success: true,
+      data,
+      total,
+      limit: parsedLimit,
+      offset: parsedOffset,
+      generatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 module.exports = router;
