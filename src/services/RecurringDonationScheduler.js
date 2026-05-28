@@ -404,7 +404,11 @@ class RecurringDonationScheduler {
               });
 
               if (attempt < this.maxRetries) {
-                await this.sleep(this.calculateBackoff(attempt));
+                const delay = this.calculateBackoff(attempt);
+                log.debug('RECURRING_SCHEDULER', `Retrying schedule in ${delay}ms (attempt ${attempt}/${this.maxRetries})`, {
+                  scheduleId: schedule.id,
+                });
+                await this.sleep(delay);
               }
             }
           }
@@ -779,7 +783,8 @@ class RecurringDonationScheduler {
       this.initialBackoffMs * Math.pow(this.backoffMultiplier, attempt - 1),
       this.maxBackoffMs
     );
-    const jitter = Math.random() * 0.3 * base;
+    // ±10% jitter to prevent thundering herd
+    const jitter = base * (Math.random() * 0.2 - 0.1);
     return Math.floor(base + jitter);
   }
 
