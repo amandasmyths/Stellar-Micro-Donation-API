@@ -53,11 +53,20 @@ async function loadDbOrigins() {
 
   try {
     const Database = require('../utils/database');
-    const rows = await Database.query('SELECT origin FROM cors_origins ORDER BY id ASC', []);
-    const origins = rows.map(r => r.origin);
-    _cache.origins = origins;
+    // Load from cors_origins (legacy) and cors_rules (active only)
+    const [originsRows, rulesRows] = await Promise.all([
+      Database.query('SELECT origin FROM cors_origins ORDER BY id ASC', []).catch(() => []),
+      Database.query('SELECT origin FROM cors_rules WHERE active = 1 ORDER BY id ASC', []).catch(() => []),
+    ]);
+    const origins = [
+      ...originsRows.map(r => r.origin),
+      ...rulesRows.map(r => r.origin),
+    ];
+    // Deduplicate
+    const unique = [...new Set(origins)];
+    _cache.origins = unique;
     _cache.expiresAt = now + _cache.TTL_MS;
-    return origins;
+    return unique;
   } catch (err) {
     // Table may not exist yet during startup — fall back to empty
     log.warn('CORS', 'Failed to load DB origins, using empty list', { error: err.message });

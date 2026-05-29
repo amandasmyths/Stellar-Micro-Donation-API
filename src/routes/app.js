@@ -496,6 +496,10 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
+// CORS allowlist management (admin only) — Issue #979
+const corsRulesAdminRoutes = require('./admin/corsRules');
+app.use('/admin/cors/rules', corsRulesAdminRoutes);
+
 // Database admin endpoints (admin only) — Issue #70
 app.use('/admin/db', dbAdminRoutes);
 
