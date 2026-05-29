@@ -1566,6 +1566,134 @@ router.get('/export', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asy
 }));
 
 /**
+ * GET /donations/search
+ * Search donations with full-text and field filtering
+ * 
+ * Query params:
+ *   - q: memo text search (case-insensitive LIKE)
+ *   - minAmount: minimum donation amount
+ *   - maxAmount: maximum donation amount
+ *   - startDate: start date (ISO 8601)
+ *   - endDate: end date (ISO 8601)
+ *   - status: donation status filter
+ *   - senderPublicKey: filter by sender public key
+ *   - recipientPublicKey: filter by recipient public key
+ *   - limit: max results (default 50, max 100)
+ *   - cursor: pagination cursor
+ */
+router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const Database = require('../utils/database');
+    const { q, minAmount, maxAmount, startDate, endDate, status, senderPublicKey, recipientPublicKey, limit = 50, cursor } = req.query;
+
+    // Validate numeric parameters
+    const parsedLimit = Math.min(parseInt(limit, 10) || 50, 100);
+    if (parsedLimit < 1) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: 'limit must be >= 1' }
+      });
+    }
+
+    const parsedMinAmount = minAmount !== undefined ? parseFloat(minAmount) : undefined;
+    const parsedMaxAmount = maxAmount !== undefined ? parseFloat(maxAmount) : undefined;
+
+    if (minAmount !== undefined && isNaN(parsedMinAmount)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_MIN_AMOUNT', message: 'minAmount must be a valid number' }
+      });
+    }
+
+    if (maxAmount !== undefined && isNaN(parsedMaxAmount)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_MAX_AMOUNT', message: 'maxAmount must be a valid number' }
+      });
+    }
+
+    // Build WHERE clause
+    const conditions = [];
+    const params = [];
+
+    if (q) {
+      conditions.push('memo LIKE ?');
+      params.push(`%${q}%`);
+    }
+
+    if (parsedMinAmount !== undefined) {
+      conditions.push('amount >= ?');
+      params.push(parsedMinAmount);
+    }
+
+    if (parsedMaxAmount !== undefined) {
+      conditions.push('amount <= ?');
+      params.push(parsedMaxAmount);
+    }
+
+    if (startDate) {
+      conditions.push('timestamp >= ?');
+      params.push(startDate);
+    }
+
+    if (endDate) {
+      conditions.push('timestamp <= ?');
+      params.push(endDate);
+    }
+
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+
+    if (senderPublicKey) {
+      conditions.push('sender_public_key = ?');
+      params.push(senderPublicKey);
+    }
+
+    if (recipientPublicKey) {
+      conditions.push('recipient_public_key = ?');
+      params.push(recipientPublicKey);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    // Get total count
+    const countResult = await Database.get(
+      `SELECT COUNT(*) as total FROM transactions ${whereClause}`,
+      params
+    );
+    const totalCount = countResult?.total || 0;
+
+    // Get paginated results
+    const offset = cursor ? parseInt(cursor, 10) : 0;
+    const rows = await Database.query(
+      `SELECT * FROM transactions ${whereClause} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+      [...params, parsedLimit + 1, offset]
+    );
+
+    const hasMore = rows.length > parsedLimit;
+    const data = rows.slice(0, parsedLimit);
+    const nextCursor = hasMore ? offset + parsedLimit : null;
+
+    res.setHeader('X-Total-Count', String(totalCount));
+    res.json({
+      success: true,
+      data,
+      pagination: {
+        cursor: offset,
+        nextCursor,
+        hasMore,
+        limit: parsedLimit,
+        total: totalCount
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * GET /donations/:id
  * Get a specific donation
  */
