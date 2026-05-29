@@ -459,6 +459,54 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, ca
 }));
 
 /**
+ * PATCH /wallets/:id/label
+ * Update the human-readable label for a wallet.
+ * Body: { "label": "string" } — empty string or null clears the label.
+ * Requires wallets:write permission (not admin).
+ */
+router.patch('/:id/label', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { label } = req.body;
+
+    // label key must be present (can be null or empty string to clear)
+    if (!Object.prototype.hasOwnProperty.call(req.body, 'label')) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: "'label' field is required" },
+      });
+    }
+
+    // null or empty string → clear the label; otherwise validate max length
+    const newLabel = (label === null || label === '') ? null : String(label);
+    if (newLabel !== null && newLabel.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'label must not exceed 100 characters' },
+      });
+    }
+
+    const wallet = await walletService.updateWallet(id, { label: newLabel });
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_UPDATED,
+      severity: AuditLogService.SEVERITY.LOW,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${id}/label`,
+      details: { walletId: id, label: newLabel },
+    });
+
+    res.json({ success: true, data: toWalletResponse(wallet) });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * PATCH /wallets/:id
  * Update wallet metadata (label, ownerName only — publicKey is immutable)
  */
