@@ -1296,6 +1296,100 @@ router.get('/pending', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler
 }));
 
 /**
+ * GET /donations/by-campaign/:campaignId
+ * Returns paginated donations linked to a campaign.
+ * Must be registered before /:id to prevent Express matching the path as an id.
+ *
+ * Query params:
+ *   - status  {string}  filter by donation status (pending|submitted|confirmed|failed)
+ *   - limit   {integer} page size (default 20, max 100)
+ *   - cursor  {integer} last seen donation id for cursor-based pagination
+ */
+router.get('/by-campaign/:campaignId', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const { campaignId } = req.params;
+    const { status, cursor } = req.query;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+
+    // Verify campaign exists
+    const Database = require('../utils/database');
+    const campaign = await Database.get(
+      'SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL',
+      [campaignId]
+    );
+    if (!campaign) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Campaign not found' },
+      });
+    }
+
+    // Build query
+    const params = [campaignId];
+    let where = 'WHERE t.campaign_id = ?';
+
+    if (status) {
+      where += ' AND t.status = ?';
+      params.push(status);
+    }
+
+    if (cursor) {
+      where += ' AND t.id > ?';
+      params.push(parseInt(cursor, 10));
+    }
+
+    // Total count (without cursor)
+    const countParams = [campaignId];
+    let countWhere = 'WHERE t.campaign_id = ?';
+    if (status) {
+      countWhere += ' AND t.status = ?';
+      countParams.push(status);
+    }
+    const countRow = await Database.get(
+      `SELECT COUNT(*) as total FROM transactions t ${countWhere}`,
+      countParams
+    );
+
+    const rows = await Database.query(
+      `SELECT t.id, t.amount, t.status, t.stellar_tx_id as transactionHash,
+              t.timestamp, t.anonymous,
+              sender.publicKey as donorPublicKey,
+              t.tags
+       FROM transactions t
+       LEFT JOIN users sender ON t.senderId = sender.id
+       ${where}
+       ORDER BY t.id ASC
+       LIMIT ?`,
+      [...params, limit]
+    );
+
+    const data = rows.map(tx => ({
+      id: tx.id,
+      amount: tx.amount,
+      donorPublicKey: tx.anonymous ? null : tx.donorPublicKey,
+      timestamp: tx.timestamp,
+      status: tx.status,
+      transactionHash: tx.transactionHash,
+      tags: tx.tags ? JSON.parse(tx.tags) : [],
+    }));
+
+    const nextCursor = rows.length === limit && rows.length > 0
+      ? rows[rows.length - 1].id
+      : null;
+
+    res.json({
+      success: true,
+      data,
+      count: data.length,
+      total: countRow.total,
+      pagination: { limit, nextCursor },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * GET /donations/recent
  * Get recent donations, ordered by creation date descending.
  * Must be registered before /:id to prevent Express matching "recent" as an id.
