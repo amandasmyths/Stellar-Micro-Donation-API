@@ -194,31 +194,39 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
       });
     }
 
-    // Check if donor exists
-    const donor = await Database.get(
-      'SELECT id, publicKey FROM users WHERE publicKey = ?',
-      [donorPublicKey]
+    // Check if both donor and recipient exist in a single query
+    const wallets = await Database.all(
+      'SELECT id, publicKey FROM users WHERE publicKey IN (?, ?)',
+      [donorPublicKey, recipientPublicKey]
     );
 
-    if (!donor) {
-      return res.status(404).json({
+    const donorWallet = wallets.find(w => w.publicKey === donorPublicKey);
+    const recipientWallet = wallets.find(w => w.publicKey === recipientPublicKey);
+
+    if (!donorWallet) {
+      return res.status(422).json({
         success: false,
-        error: 'Donor wallet not found'
+        error: {
+          code: 'WALLET_NOT_FOUND',
+          message: 'Donor wallet not found. Register the wallet first via POST /wallets.',
+          field: 'donorPublicKey'
+        }
       });
     }
 
-    // Check if recipient exists
-    const recipient = await Database.get(
-      'SELECT id, publicKey FROM users WHERE publicKey = ?',
-      [recipientPublicKey]
-    );
-
-    if (!recipient) {
-      return res.status(404).json({
+    if (!recipientWallet) {
+      return res.status(422).json({
         success: false,
-        error: 'Recipient wallet not found'
+        error: {
+          code: 'WALLET_NOT_FOUND',
+          message: 'Recipient wallet not found. Register the wallet first via POST /wallets.',
+          field: 'recipientPublicKey'
+        }
       });
     }
+
+    const donor = donorWallet;
+    const recipient = recipientWallet;
 
     // Prevent self-donations
     if (donor.id === recipient.id) {
