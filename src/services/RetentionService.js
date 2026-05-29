@@ -193,6 +193,74 @@ class RetentionService {
   }
 
   /**
+   * Preview what would be purged without actually deleting.
+   * Returns counts and date ranges for each data type.
+   * @returns {Promise<Object>} Preview object with counts and size estimates
+   */
+  async preview() {
+    const donationDays = parseDays('RETENTION_DONATIONS_DAYS', 2555);
+    const auditLogDays = parseDays('RETENTION_AUDIT_LOGS_DAYS', 365);
+    const idempotencyDays = parseDays('RETENTION_IDEMPOTENCY_DAYS', 30);
+
+    const donationCutoff = donationDays > 0 ? cutoffDate(donationDays) : null;
+    const auditLogCutoff = auditLogDays > 0 ? cutoffDate(auditLogDays) : null;
+    const idempotencyCutoff = idempotencyDays > 0 ? cutoffDate(idempotencyDays) : null;
+
+    const [donationPreview, auditLogPreview, idempotencyPreview] = await Promise.all([
+      donationDays > 0
+        ? Database.get(
+            `SELECT COUNT(*) as count, MIN(timestamp) as oldestRecord, MAX(timestamp) as newestRecord FROM transactions WHERE timestamp < ?`,
+            [donationCutoff]
+          ).catch(() => ({ count: 0, oldestRecord: null, newestRecord: null }))
+        : { count: 0, oldestRecord: null, newestRecord: null },
+      auditLogDays > 0
+        ? Database.get(
+            `SELECT COUNT(*) as count, MIN(timestamp) as oldestRecord, MAX(timestamp) as newestRecord FROM audit_logs WHERE timestamp < ?`,
+            [auditLogCutoff]
+          ).catch(() => ({ count: 0, oldestRecord: null, newestRecord: null }))
+        : { count: 0, oldestRecord: null, newestRecord: null },
+      idempotencyDays > 0
+        ? Database.get(
+            `SELECT COUNT(*) as count, MIN(createdAt) as oldestRecord, MAX(createdAt) as newestRecord FROM idempotency_keys WHERE createdAt < ?`,
+            [idempotencyCutoff]
+          ).catch(() => ({ count: 0, oldestRecord: null, newestRecord: null }))
+        : { count: 0, oldestRecord: null, newestRecord: null },
+    ]);
+
+    // Estimate sizes (rough approximation)
+    const estimateDonationSize = donationPreview.count * 500; // ~500 bytes per transaction
+    const estimateAuditLogSize = auditLogPreview.count * 1000; // ~1KB per audit log
+    const estimateIdempotencySize = idempotencyPreview.count * 200; // ~200 bytes per key
+
+    const totalEstimatedSize = estimateDonationSize + estimateAuditLogSize + estimateIdempotencySize;
+
+    return {
+      donations: {
+        count: donationPreview.count,
+        oldestRecord: donationPreview.oldestRecord,
+        newestRecord: donationPreview.newestRecord,
+        estimatedSizeBytes: estimateDonationSize,
+        retentionDays: donationDays,
+      },
+      auditLogs: {
+        count: auditLogPreview.count,
+        oldestRecord: auditLogPreview.oldestRecord,
+        newestRecord: auditLogPreview.newestRecord,
+        estimatedSizeBytes: estimateAuditLogSize,
+        retentionDays: auditLogDays,
+      },
+      idempotencyKeys: {
+        count: idempotencyPreview.count,
+        oldestRecord: idempotencyPreview.oldestRecord,
+        newestRecord: idempotencyPreview.newestRecord,
+        estimatedSizeBytes: estimateIdempotencySize,
+        retentionDays: idempotencyDays,
+      },
+      totalEstimatedSizeBytes: totalEstimatedSize,
+    };
+  }
+
+  /**
    * Return current retention configuration and record counts per data type.
    * @returns {Promise<Object>} Status object
    */
