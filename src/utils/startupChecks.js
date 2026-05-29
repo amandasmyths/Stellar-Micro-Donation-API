@@ -197,6 +197,39 @@ function checkDatabasePermissions() {
 }
 
 /**
+ * Non-blocking DB integrity check run at startup.
+ * Logs result at INFO level, or ERROR if corruption is detected.
+ */
+async function runDbIntegrityCheck() {
+  const log = require('./log');
+  const startedAt = Date.now();
+  const issues = [];
+
+  try {
+    const integrityRows = await Database.query('PRAGMA integrity_check', []);
+    for (const row of integrityRows) {
+      const msg = row.integrity_check || row[Object.keys(row)[0]];
+      if (msg && msg !== 'ok') issues.push(`integrity_check: ${msg}`);
+    }
+
+    const fkRows = await Database.query('PRAGMA foreign_key_check', []);
+    for (const row of fkRows) {
+      issues.push(`foreign_key_check: table=${row.table} rowid=${row.rowid} parent=${row.parent} fkid=${row.fkid}`);
+    }
+  } catch (err) {
+    issues.push(`check_error: ${err.message}`);
+  }
+
+  const durationMs = Date.now() - startedAt;
+
+  if (issues.length === 0) {
+    log.info('STARTUP', 'Database integrity check passed', { durationMs });
+  } else {
+    log.error('STARTUP', 'Database integrity check found issues', { issues, durationMs });
+  }
+}
+
+/**
  * Run all startup checks.
  *
  * @param {object} [opts]
@@ -221,6 +254,9 @@ async function run({ exitOnFailure = false } = {}) {
     await checkStellarNetwork(),
     checkDatabasePermissions(),
   ];
+
+  // Non-blocking DB integrity check — log result but never fail startup
+  runDbIntegrityCheck().catch(() => {});
 
   const passed = criticalResults.every(Boolean);
 

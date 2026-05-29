@@ -344,4 +344,81 @@ router.get('/vacuum/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) 
   res.json({ success: true, data: { jobId: req.params.jobId, ...job } });
 });
 
+// ─── Integrity Check ──────────────────────────────────────────────────────────
+
+/** In-memory store for integrity check jobs */
+const integrityJobs = new Map();
+
+/**
+ * Run SQLite integrity_check and foreign_key_check pragmas.
+ * Returns { status, issues, checkedAt, durationMs }.
+ */
+async function runIntegrityCheck() {
+  const startedAt = Date.now();
+  const checkedAt = new Date().toISOString();
+  const issues = [];
+
+  try {
+    // PRAGMA integrity_check returns rows with a single column "integrity_check"
+    const integrityRows = await Database.query('PRAGMA integrity_check', []);
+    for (const row of integrityRows) {
+      const msg = row.integrity_check || row[Object.keys(row)[0]];
+      if (msg && msg !== 'ok') issues.push(`integrity_check: ${msg}`);
+    }
+
+    // PRAGMA foreign_key_check returns rows for each violation
+    const fkRows = await Database.query('PRAGMA foreign_key_check', []);
+    for (const row of fkRows) {
+      issues.push(`foreign_key_check: table=${row.table} rowid=${row.rowid} parent=${row.parent} fkid=${row.fkid}`);
+    }
+  } catch (err) {
+    issues.push(`check_error: ${err.message}`);
+  }
+
+  return {
+    status: issues.length === 0 ? 'ok' : 'corrupted',
+    issues,
+    checkedAt,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+/**
+ * POST /admin/db/integrity-check
+ * Start a background integrity check job.
+ * Returns { jobId } immediately; poll GET /admin/db/integrity-check/:jobId for results.
+ */
+router.post('/integrity-check', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
+  const jobId = `integrity-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const job = { status: 'running', issues: [], checkedAt: null, durationMs: null };
+  integrityJobs.set(jobId, job);
+
+  // Run asynchronously — do not await
+  runIntegrityCheck().then(result => {
+    Object.assign(job, result);
+  }).catch(err => {
+    job.status = 'corrupted';
+    job.issues = [`unexpected_error: ${err.message}`];
+    job.checkedAt = new Date().toISOString();
+    job.durationMs = 0;
+  });
+
+  res.json({ success: true, jobId });
+});
+
+/**
+ * GET /admin/db/integrity-check/:jobId
+ * Returns the status and results of an integrity check job.
+ */
+router.get('/integrity-check/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
+  const job = integrityJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({
+      success: false,
+      error: { code: 'JOB_NOT_FOUND', message: 'Integrity check job not found' },
+    });
+  }
+  res.json({ success: true, data: { jobId: req.params.jobId, ...job } });
+});
+
 module.exports = router;
