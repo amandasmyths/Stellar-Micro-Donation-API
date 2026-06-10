@@ -120,3 +120,5 @@ class DonationValidator {
 }
 
 module.exports = new DonationValidator();
+// Expose the class for callers/tests that need their own instance via `new`.
+module.exports.Class = DonationValidator;

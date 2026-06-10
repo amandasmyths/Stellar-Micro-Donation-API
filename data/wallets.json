@@ -1,10 +1,10 @@
 [
   {
-    "id": "1780922350012",
-    "address": "G3FSJK5I2A2HU7XOC2SCIRKQ6QBENRKXBFPYYEQJC52WG3C443U3QZBD",
-    "label": "v1:61ca0bc9dbe2be043efd3f2d:4de2a66e74631683bae4d9bdb48e50e9e9c8312cb1812f426d1c5f84:7bd4bab23c4ad3b11f3a94a22a462d2d",
+    "id": "1781092485917",
+    "address": "alice",
+    "label": null,
     "ownerName": null,
-    "createdAt": "2026-06-08T12:39:10.012Z",
+    "createdAt": "2026-06-10T11:54:45.917Z",
     "deletedAt": null,
     "last_synced_at": null,
     "last_cursor": null
@@ -12,7 +12,7 @@
   {
     "id": "1",
     "address": "wallet-1",
-    "label": "v1:205744bb779d36204cc1921c:589c6f6d4f60a90e:f5610cc77bc6749bc8b1314a25cfbd3e",
+    "label": "v1:e2c97cbaaae129442a12fd50:c8f7d567ddbb46a9:c2d0e600711f14748ceb1e7d44087a63",
     "ownerName": "Owner 1",
     "createdAt": "2026-01-01T00:01:00.000Z",
     "deletedAt": null,
@@ -22,7 +22,7 @@
   {
     "id": "2",
     "address": "wallet-2",
-    "label": "v1:3deddbcc2b9b9f6d8a1cabb0:f4902a5c92842ff3:2bc55c71bceb5fa80cf830d38790a9c9",
+    "label": "v1:214e39dd27c704c393c213ec:4c560fd8e6635348:264756dcb9f3acda1d7632b6849c6b7a",
     "ownerName": "Owner 2",
     "createdAt": "2026-01-01T00:02:00.000Z",
     "deletedAt": null,
@@ -32,7 +32,7 @@
   {
     "id": "3",
     "address": "wallet-3",
-    "label": "v1:d8f4eb1577f2c843f2a83bec:f6d1f7e3e527c2d8:0573215a90088f41821d4abea6b4e38c",
+    "label": "v1:75f39936c229f54704efbd60:17ba0db27817f824:525a6089bbdb0ef4f51541da9788730c",
     "ownerName": "Owner 3",
     "createdAt": "2026-01-01T00:03:00.000Z",
     "deletedAt": null,
@@ -42,7 +42,7 @@
   {
     "id": "4",
     "address": "wallet-4",
-    "label": "v1:01bb628bf6e69c2b491cc892:579f8399509268b4:71fcbe1cd64cfb7cd6535525a24eea40",
+    "label": "v1:73f6f55ff06f11612e07ea36:f187f7b76e90b157:c6bdc607ca3594d88bc57b254833fef8",
     "ownerName": "Owner 4",
     "createdAt": "2026-01-01T00:04:00.000Z",
     "deletedAt": null,
@@ -52,7 +52,7 @@
   {
     "id": "5",
     "address": "wallet-5",
-    "label": "v1:f73d51548a4dbce1c487bd8a:27ba5161f552e87a:3041e7de90cb77b2128762ea1b7c3d50",
+    "label": "v1:bd82ddaf8972754ad3a4250b:2025c5c460c6088a:aa570e566c8aa9e517348fe9d024c792",
     "ownerName": "Owner 5",
     "createdAt": "2026-01-01T00:05:00.000Z",
     "deletedAt": null,
@@ -60,51 +60,31 @@
     "last_cursor": null
   },
   {
-    "id": "1",
-    "address": "wallet-1",
-    "label": "v1:6b25f873cf74814fb0c46cc8:f4e19ad8859848ad:050ecc82b9d81a31da0a084927cb8a48",
-    "ownerName": "Owner 1",
-    "createdAt": "2026-01-01T00:01:00.000Z",
+    "id": "1781092551646",
+    "address": "GR6SMLMB45QSBWWR64EXFF5CHG7SXG3MMUDGXAS2OIP5O4X7EVF5TZ5L",
+    "label": "v1:4d0f6ad083260ef2a2c850a5:f7a61ec57353ed:d57fca7392f9cf4f1fa8ca74e9a51e65",
+    "ownerName": null,
+    "createdAt": "2026-06-10T11:55:51.646Z",
     "deletedAt": null,
     "last_synced_at": null,
     "last_cursor": null
   },
   {
-    "id": "2",
-    "address": "wallet-2",
-    "label": "v1:4cf4479fe2ffbf54ed90c404:dd25a5235a01fd65:9149f8e2d09720c7a1eb3af556a2be73",
-    "ownerName": "Owner 2",
-    "createdAt": "2026-01-01T00:02:00.000Z",
+    "id": "1781092552470",
+    "address": "GEMQSWL4FI42CH22PJAFYES44XMTTKHQWWR7JM6WF4HQ65IVSZLFIIK5",
+    "label": "v1:6abc507de2c82ef56b89bf7d:5efc88645085679147b897:4978d54317f1ad69d2ce213f21305e58",
+    "ownerName": null,
+    "createdAt": "2026-06-10T11:55:52.470Z",
     "deletedAt": null,
     "last_synced_at": null,
     "last_cursor": null
   },
   {
-    "id": "3",
-    "address": "wallet-3",
-    "label": "v1:e4b80fbdafd615d19a3d513e:a26da5f3cc66da1a:972dd0d50045ad9c6d659f6176e93854",
-    "ownerName": "Owner 3",
-    "createdAt": "2026-01-01T00:03:00.000Z",
-    "deletedAt": null,
-    "last_synced_at": null,
-    "last_cursor": null
-  },
-  {
-    "id": "4",
-    "address": "wallet-4",
-    "label": "v1:f7f0838c4a89bd945cc31c9e:5f40e8467e1bea75:434f7515a6dbefb588e96f9598c89762",
-    "ownerName": "Owner 4",
-    "createdAt": "2026-01-01T00:04:00.000Z",
-    "deletedAt": null,
-    "last_synced_at": null,
-    "last_cursor": null
-  },
-  {
-    "id": "5",
-    "address": "wallet-5",
-    "label": "v1:0fb348f6c5b3d41773f5b498:9427101c5f0b4038:180c9c337c67714c976f7185c425258d",
-    "ownerName": "Owner 5",
-    "createdAt": "2026-01-01T00:05:00.000Z",
+    "id": "1781092552780",
+    "address": "GZTSU4EGV3RIG5UVX6BHR7WDLRVSEAOZFTTGR5QIKVKM67574N26M3AI",
+    "label": "v1:ea486166c4f1debd0478a0fb:b9879d1e0341da1f8f181ec107e6:243722d6121d772dcfa20d9f32b0f4e5",
+    "ownerName": null,
+    "createdAt": "2026-06-10T11:55:52.780Z",
     "deletedAt": null,
     "last_synced_at": null,
     "last_cursor": null

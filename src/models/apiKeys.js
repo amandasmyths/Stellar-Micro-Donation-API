@@ -658,8 +658,26 @@ async function extendApiKey(id, days) {
   return { oldExpiresAt, newExpiresAt };
 }
 
+/**
+ * Positional-argument convenience wrapper around {@link createApiKey}.
+ * @param {string} name
+ * @param {string} [role='user']
+ * @param {number|null} [expiresInDays=null]
+ * @param {object} [metadata={}]
+ * @returns {Promise<Object>} Created key info (raw key returned once)
+ */
+async function generateApiKey(name, role = 'user', expiresInDays = null, metadata = {}) {
+  return createApiKey({
+    name,
+    role,
+    expiresInDays: expiresInDays == null ? undefined : expiresInDays,
+    metadata: metadata || {},
+  });
+}
+
 module.exports = {
   initializeApiKeysTable,
+  generateApiKey,
   createApiKey,
   validateApiKey,
   validateKey,

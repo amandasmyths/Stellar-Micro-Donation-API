@@ -172,11 +172,12 @@ describe('Security Configuration', () => {
     });
 
     test('should exit when ENCRYPTION_KEY is not set', () => {
+      // Production fail-fast path: loadSecurityConfig calls process.exit(1).
       const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {});
       delete process.env.ENCRYPTION_KEY;
-      
+
       loadSecurityConfig();
-      
+
       expect(mockExit).toHaveBeenCalledWith(1);
       mockExit.mockRestore();
     });

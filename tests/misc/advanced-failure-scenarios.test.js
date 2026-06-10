@@ -4,7 +4,7 @@
  */
 
 const { getStellarService } = require('../../src/config/stellar');
-const DonationValidator = require('../../src/utils/donationValidator');
+const DonationValidator = require('../../src/utils/donationValidator').Class || require('../../src/utils/donationValidator');
 
 describe('Advanced Failure Scenarios', () => {
   let stellarService;

@@ -107,4 +107,4 @@ function invalidateCache() {
   cache = { rates: null, fetchedAt: 0 };
 }
 
-module.exports = { getRates, convertToXLM, invalidateCache, SUPPORTED_CURRENCIES };
+module.exports = { getRates, convertToXLM, invalidateCache, _clearCache: invalidateCache, SUPPORTED_CURRENCIES };

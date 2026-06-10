@@ -174,7 +174,7 @@
 const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
-const { requireIdempotency, conditionalIdempotency, storeIdempotencyResponse } = require('../middleware/idempotency');
+const { requireIdempotency, storeIdempotencyResponse } = require('../middleware/idempotency');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError, ERROR_CODES } = require('../utils/errors');
@@ -457,11 +457,15 @@ const createDonationSchema = validateSchema({
   body: {
     fields: {
       amount: { types: ['number', 'numberString'], required: true },
+      // `recipient` is required for non-custodial donations, but custodial
+      // donations identify parties by senderId/receiverId instead, so it is
+      // validated conditionally in the handler rather than required here.
       recipient: {
         type: 'string',
-        required: true,
+        required: false,
         trim: true,
         minLength: 1,
+        nullable: true,
         validate: (value) => {
           // Allow federation addresses (e.g. alice*example.com) to pass through
           if (typeof value === 'string' && value.includes('*')) return true;
@@ -470,6 +474,10 @@ const createDonationSchema = validateSchema({
             : 'address must be a valid Stellar public key (56-character Ed25519 public key starting with G)';
         },
       },
+      // Custodial-mode identifiers (wallet/user ids). When both are present the
+      // request is routed to the custodial donation flow.
+      senderId: { types: ['number', 'numberString', 'string'], required: false, nullable: true },
+      receiverId: { types: ['number', 'numberString', 'string'], required: false, nullable: true },
       currency: { type: 'string', required: false, nullable: true },
       donor: { type: 'string', required: false, nullable: true },
       memo: { type: 'string', required: false, maxLength: 28, nullable: true },
@@ -488,6 +496,12 @@ const createDonationSchema = validateSchema({
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
+    // Custodial mode: when both senderId and receiverId are supplied, the parties
+    // are wallet/user ids rather than on-chain addresses — route to the custodial flow.
+    if (req.body.senderId != null && req.body.receiverId != null) {
+      return await processCustodialDonation(req, res, next);
+    }
+
     const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount } = req.body;
 
     // Basic validation
@@ -826,7 +840,9 @@ async function withDonorLock(donorId, fn) {
   }
 }
 
-router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREATE), conditionalIdempotency, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
+// Custodial donation flow (senderId/receiverId). Invoked from the unified
+// POST / handler above when both custodial identifiers are present.
+async function processCustodialDonation(req, res, next) {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
 
@@ -915,7 +931,7 @@ router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREA
   } catch (error) {
     next(error);
   }
-}));
+}
 
 function formatBatchDonationError(index, code, message) {
   return {

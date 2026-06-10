@@ -61,6 +61,11 @@ class Wallet {
     fs.writeFileSync(WALLETS_DB_PATH, JSON.stringify(wallets, null, 2));
   }
 
+  // Test helper for integration suites: wipe all persisted wallet data.
+  static _clearAllData() {
+    this.saveWallets([]);
+  }
+
   static create(walletData) {
     const wallets = this.loadWallets();
     const newWallet = {

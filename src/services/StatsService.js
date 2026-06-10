@@ -281,6 +281,27 @@ class StatsService {
     return date.toISOString().split('T')[0];
   }
 
+  /**
+   * Return the calendar date key (YYYY-MM-DD) for a date as observed in a
+   * specific IANA timezone. Falls back to UTC when the timezone is invalid.
+   * @param {Date} date
+   * @param {string} [timezone='UTC']
+   * @returns {string} YYYY-MM-DD
+   */
+  static getDateKeyInTimezone(date, timezone = 'UTC') {
+    try {
+      // en-CA formats as YYYY-MM-DD
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(date);
+    } catch (_) {
+      return this.getDateKey(date);
+    }
+  }
+
   static getWeekKey(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     const dayNum = d.getUTCDay() || 7;

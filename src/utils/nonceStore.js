@@ -2,8 +2,9 @@
  * Nonce Store - Request Replay Protection
  *
  * Tracks used nonces to ensure each signed request can only be used once.
- * Nonces are persisted to the database to survive server restarts and work
- * across multiple instances in a distributed deployment.
+ * Nonces are held in an in-memory, size-bounded (LRU-evicting) store. Each
+ * entry expires after the signing window so the store stays small and old
+ * nonces can be reused once they can no longer form a valid signature.
  *
  * Security assumptions:
  * - Nonces must have sufficient entropy (>= 16 random bytes / 32 hex chars).
@@ -13,32 +14,33 @@
  */
 
 const { SIGNATURE_MAX_AGE_MS } = require('./requestSigner');
-const log = require('./log');
 
 /** How often the cleanup sweep runs (ms). Defaults to 5 minutes. */
 const CLEANUP_INTERVAL_MS = parseInt(process.env.NONCE_CLEANUP_INTERVAL_MS, 10) || 300000;
 
-/** Enable in-memory store for testing via environment variable. */
-const USE_MEMORY_NONCE_STORE = process.env.USE_MEMORY_NONCE_STORE === 'true';
+/** Default upper bound on the number of nonces retained in memory. */
+const DEFAULT_MAX_SIZE = parseInt(process.env.NONCE_MAX_SIZE, 10) || 100000;
 
 /**
- * NonceStore - database-backed store for used nonces with optional in-memory fallback.
+ * NonceStore - synchronous, in-memory, size-bounded store for used nonces.
  *
- * When USE_MEMORY_NONCE_STORE=true, uses in-memory Map for testing.
- * Otherwise, persists nonces to the database for durability and multi-instance support.
+ * Entries map a nonce string to its expiry timestamp (ms since epoch). When the
+ * store exceeds `maxSize`, the oldest entries are evicted first (insertion-order
+ * eviction via the underlying Map).
  */
 class NonceStore {
-  constructor({ db = null, windowMs = SIGNATURE_MAX_AGE_MS } = {}) {
-    this._db = db;
+  constructor({ windowMs = SIGNATURE_MAX_AGE_MS, maxSize = DEFAULT_MAX_SIZE } = {}) {
     this._windowMs = windowMs;
+    this._maxSize = maxSize;
     this._cleanupTimer = null;
 
-    // In-memory store for testing
-    this._memoryStore = USE_MEMORY_NONCE_STORE ? new Map() : null;
+    /** nonce -> expiry timestamp (ms epoch) */
+    this._store = new Map();
 
     // Metrics
     this._hits = 0;
     this._misses = 0;
+    this._evictions = 0;
   }
 
   /**
@@ -47,60 +49,31 @@ class NonceStore {
    * @param {string} nonce - The nonce value from the X-Nonce header.
    * @returns {{ seen: boolean }} `seen: true` means the nonce was already used (replay).
    */
-  async check(nonce) {
-    if (this._memoryStore) {
-      return this._checkMemory(nonce);
-    }
-
-    if (!this._db) {
-      throw new Error('NonceStore: database not initialized');
-    }
-
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + this._windowMs);
-
-    try {
-      // Check if nonce exists and is not expired
-      const existing = await this._db.get(
-        'SELECT nonce FROM nonce_store WHERE nonce = ? AND expiresAt > ?',
-        [nonce, now.toISOString()]
-      );
-
-      if (existing) {
-        this._hits++;
-        return { seen: true };
-      }
-
-      // Insert new nonce
-      await this._db.run(
-        'INSERT OR IGNORE INTO nonce_store (nonce, expiresAt) VALUES (?, ?)',
-        [nonce, expiresAt.toISOString()]
-      );
-
-      this._misses++;
-      return { seen: false };
-    } catch (err) {
-      // Log error but don't fail the request
-      log.error('NONCE_STORE', 'check error', { error: err.message });
-      return { seen: false };
-    }
-  }
-
-  /**
-   * In-memory check for testing.
-   * @private
-   */
-  _checkMemory(nonce) {
+  check(nonce) {
     const now = Date.now();
-    const existing = this._memoryStore.get(nonce);
+    const expiry = this._store.get(nonce);
 
-    if (existing !== undefined && existing > now) {
+    if (expiry !== undefined && expiry > now) {
       this._hits++;
       return { seen: true };
     }
 
-    this._memoryStore.set(nonce, now + this._windowMs);
+    // Miss: either a brand-new nonce, or a previously seen one that has expired.
+    // Delete any stale entry so the re-inserted nonce moves to the most-recent
+    // position for insertion-order eviction.
+    if (expiry !== undefined) {
+      this._store.delete(nonce);
+    }
+    this._store.set(nonce, now + this._windowMs);
     this._misses++;
+
+    // Evict oldest entries until we are within the size bound.
+    while (this._store.size > this._maxSize) {
+      const oldest = this._store.keys().next().value;
+      this._store.delete(oldest);
+      this._evictions++;
+    }
+
     return { seen: false };
   }
 
@@ -109,38 +82,12 @@ class NonceStore {
    *
    * @returns {{ removed: number }} Number of entries removed.
    */
-  async cleanup() {
-    if (this._memoryStore) {
-      return this._cleanupMemory();
-    }
-
-    if (!this._db) {
-      return { removed: 0 };
-    }
-
-    try {
-      const now = new Date().toISOString();
-      const result = await this._db.run(
-        'DELETE FROM nonce_store WHERE expiresAt <= ?',
-        [now]
-      );
-      return { removed: result.changes || 0 };
-    } catch (err) {
-      log.error('NONCE_STORE', 'cleanup error', { error: err.message });
-      return { removed: 0 };
-    }
-  }
-
-  /**
-   * In-memory cleanup for testing.
-   * @private
-   */
-  _cleanupMemory() {
+  cleanup() {
     const now = Date.now();
     let removed = 0;
-    for (const [nonce, expiresAt] of this._memoryStore) {
-      if (expiresAt <= now) {
-        this._memoryStore.delete(nonce);
+    for (const [nonce, expiry] of this._store) {
+      if (expiry <= now) {
+        this._store.delete(nonce);
         removed++;
       }
     }
@@ -175,9 +122,20 @@ class NonceStore {
   }
 
   /**
+   * Remove all entries and reset metrics (used to isolate tests).
+   */
+  clear() {
+    this._store.clear();
+    this._hits = 0;
+    this._misses = 0;
+    this._evictions = 0;
+  }
+
+  /**
    * Return store metrics.
    *
-   * @returns {{ hits: number, misses: number, hitRate: number }}
+   * @returns {{ hits: number, misses: number, hitRate: number, size: number,
+   *   maxSize: number, evictions: number }}
    */
   getMetrics() {
     const total = this._hits + this._misses;
@@ -185,23 +143,34 @@ class NonceStore {
       hits: this._hits,
       misses: this._misses,
       hitRate: total === 0 ? 0 : this._hits / total,
+      size: this._store.size,
+      maxSize: this._maxSize,
+      evictions: this._evictions,
     };
   }
 }
 
-/** Singleton instance - initialized with database in app startup. */
-let defaultStore = null;
+/** Singleton instance shared by the middleware. */
+const defaultStore = new NonceStore();
 
-function initializeDefaultStore(db) {
-  defaultStore = new NonceStore({ db }).startCleanup();
+/**
+ * Initialize the shared store. The `db` argument is accepted for backwards
+ * compatibility with earlier (database-backed) call sites but is unused — the
+ * store is purely in-memory. Starts the background cleanup sweep.
+ */
+function initializeDefaultStore(/* db */) {
+  defaultStore.startCleanup();
   return defaultStore;
 }
 
 function getDefaultStore() {
-  if (!defaultStore) {
-    defaultStore = new NonceStore().startCleanup();
-  }
   return defaultStore;
 }
 
-module.exports = { NonceStore, initializeDefaultStore, getDefaultStore, CLEANUP_INTERVAL_MS };
+module.exports = {
+  NonceStore,
+  defaultStore,
+  initializeDefaultStore,
+  getDefaultStore,
+  CLEANUP_INTERVAL_MS,
+};

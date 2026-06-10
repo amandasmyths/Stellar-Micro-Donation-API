@@ -140,9 +140,62 @@ function formatUnknownFieldsError(segmentName, unknownFields) {
   return { field: segmentName, message: `Unknown fields: ${unknownFields.join(', ')}`, code: 'UNKNOWN_FIELDS' };
 }
 
+/**
+ * Render a received value as a short, safe, human-readable display string for
+ * inclusion in validation error messages.
+ * @param {*} value
+ * @returns {string}
+ */
+function sanitizeValueForDisplay(value) {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'boolean' || typeof value === 'number') return String(value);
+  if (typeof value === 'string') {
+    let s = value;
+    const MAX = 80;
+    if (s.length > MAX) s = `${s.slice(0, MAX)}...`;
+    s = s.replace(/"/g, '\\"');
+    return `"${s}"`;
+  }
+  if (Array.isArray(value)) return `array[${value.length}]`;
+  if (typeof value === 'object') return `object{${Object.keys(value).length} keys}`;
+  return String(value);
+}
+
+/**
+ * Produce an example value (as a display string) for a field given its schema
+ * rules, used to guide callers toward a valid value.
+ * @param {object} [rules={}]
+ * @returns {string}
+ */
+function generateExampleValue(rules = {}) {
+  if (Array.isArray(rules.enum) && rules.enum.length > 0) {
+    return `"${rules.enum[0]}"`;
+  }
+  switch (rules.type) {
+    case 'string':
+      return rules.minLength ? `"${'a'.repeat(rules.minLength)}"` : '"example"';
+    case 'number':
+      return String(rules.min != null ? rules.min : 10.5);
+    case 'integer':
+      return String(rules.min != null ? rules.min : 10);
+    case 'boolean':
+      return 'true';
+    case 'dateString':
+      return '"2024-01-01T00:00:00.000Z"';
+    case 'array':
+      return '[]';
+    case 'object':
+      return '{}';
+    default:
+      return '"example"';
+  }
+}
+
 module.exports = {
   formatError, buildErrorResponse, maskValue, isSensitive, ERROR_REGISTRY, SENSITIVE_FIELDS,
   formatRequiredError, formatNullError, formatTypeError, formatEnumError,
   formatLengthError, formatRangeError, formatPatternError, formatCustomError,
   formatSegmentError, formatUnknownFieldsError,
+  sanitizeValueForDisplay, generateExampleValue,
 };
