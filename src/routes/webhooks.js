@@ -77,6 +77,8 @@ router.post('/', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.webhook), asy
       events,
       tlsSkipVerify: !!tlsSkipVerify,
       apiKeyId: req.apiKeyId || null,
+      requestId: req.headers['x-request-id'] || req.id || null,
+      ipAddress: req.ip || null,
     });
     res.status(201).json({ success: true, data: webhook });
   } catch (err) {

@@ -127,6 +127,81 @@ describe('WebhookService.register()', () => {
   });
 });
 
+describe('WebhookService TLS skip-verify gating', () => {
+  const originalEnv = process.env.NODE_ENV;
+  const originalFlag = process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY;
+
+  afterEach(() => {
+    process.env.NODE_ENV = originalEnv;
+    if (originalFlag === undefined) {
+      delete process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY;
+    } else {
+      process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY = originalFlag;
+    }
+  });
+
+  it('blocks tlsSkipVerify=true in production and throws 400', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY;
+    await expect(
+      WebhookService.register({ url: 'https://example.com/hook', events: ['*'], tlsSkipVerify: true })
+    ).rejects.toMatchObject({ status: 400, message: /not allowed in production/i });
+  });
+
+  it('allows tlsSkipVerify=true in production when break-glass flag is set', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY = 'break-glass';
+    const wh = await WebhookService.register({
+      url: 'https://example.com/hook',
+      events: ['*'],
+      tlsSkipVerify: true,
+    });
+    expect(wh.tlsSkipVerify).toBe(true);
+  });
+
+  it('allows tlsSkipVerify=true in non-production environments', async () => {
+    process.env.NODE_ENV = 'development';
+    delete process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY;
+    const wh = await WebhookService.register({
+      url: 'https://example.com/hook',
+      events: ['*'],
+      tlsSkipVerify: true,
+    });
+    expect(wh.tlsSkipVerify).toBe(true);
+  });
+
+  it('_httpPost forces rejectUnauthorized=true in production without break-glass', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY;
+    // _httpPost should not actually make a network call; capture the options
+    const https = require('https');
+    const captured = [];
+    const origRequest = https.request;
+    https.request = (opts, cb) => {
+      captured.push(opts);
+      // return a minimal fake request
+      const EventEmitter = require('events');
+      const req = new EventEmitter();
+      req.write = () => {};
+      req.end = () => {
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        res.resume = () => {};
+        if (cb) cb(res);
+      };
+      req.destroy = () => {};
+      return req;
+    };
+    try {
+      const { WebhookService: WS } = require('../../src/services/WebhookService');
+      await WS._httpPost('https://example.com/hook', '{}', 'sig', {}, true, 42);
+      expect(captured[0].rejectUnauthorized).toBe(true);
+    } finally {
+      https.request = origRequest;
+    }
+  });
+});
+
 describe('WebhookService.list()', () => {
   it('returns empty array when no webhooks registered', async () => {
     const list = await WebhookService.list();

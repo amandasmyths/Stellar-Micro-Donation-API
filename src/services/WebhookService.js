@@ -103,7 +103,7 @@ class WebhookService {
    * @param {string} [params.ownerEmail]
    * @returns {Promise<Object>}
    */
-  async register({ url, events, apiKeyId = null, ownerEmail = null, tlsSkipVerify = false }) {
+  async register({ url, events, apiKeyId = null, ownerEmail = null, tlsSkipVerify = false, requestId = null, ipAddress = null }) {
     if (!url) { const e = new Error('url is required'); e.status = 400; throw e; }
     if (!events || events.length === 0) { const e = new Error('events must be a non-empty array'); e.status = 400; throw e; }
 
@@ -119,9 +119,45 @@ class WebhookService {
       }
     }
 
-    // tlsSkipVerify is not allowed in production
-    if (tlsSkipVerify && process.env.NODE_ENV === 'production') {
-      const e = new Error('tlsSkipVerify is not allowed in production'); e.status = 400; throw e;
+    if (tlsSkipVerify) {
+      const AuditLogService = require('./AuditLogService');
+      const isProduction = process.env.NODE_ENV === 'production';
+      const breakGlass = process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY === 'break-glass';
+      const blocked = isProduction && !breakGlass;
+
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.CONFIGURATION,
+        action: blocked
+          ? AuditLogService.ACTION.WEBHOOK_TLS_SKIP_VERIFY_BLOCKED
+          : AuditLogService.ACTION.WEBHOOK_TLS_SKIP_VERIFY_BYPASS,
+        severity: (isProduction || breakGlass)
+          ? AuditLogService.SEVERITY.HIGH
+          : AuditLogService.SEVERITY.MEDIUM,
+        result: blocked ? 'FAILURE' : 'SUCCESS',
+        userId: apiKeyId ? String(apiKeyId) : 'unknown',
+        requestId: requestId || 'unknown',
+        ipAddress: ipAddress || 'unknown',
+        details: {
+          url,
+          events,
+          breakGlassActive: breakGlass,
+          nodeEnv: process.env.NODE_ENV || 'unknown',
+        },
+        reason: blocked
+          ? 'tlsSkipVerify rejected in production without break-glass flag'
+          : 'TLS verification bypass registered',
+      }).catch(() => {});
+
+      if (blocked) {
+        const e = new Error('tlsSkipVerify is not allowed in production'); e.status = 400; throw e;
+      }
+
+      log.warn('WEBHOOK_SERVICE', 'TLS verification bypass registered', {
+        url,
+        apiKeyId,
+        breakGlass,
+        nodeEnv: process.env.NODE_ENV,
+      });
     }
 
     // Always generate a 32-byte random secret server-side; never accept caller-supplied secrets
@@ -546,7 +582,7 @@ class WebhookService {
     const signature = WebhookService._sign(body, plaintextSecret);
 
     try {
-      const result = await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders, !!webhook.tls_skip_verify);
+      const result = await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders, !!webhook.tls_skip_verify, webhook.id);
       
       // Log successful delivery
       const Database = require('../utils/database');
@@ -604,7 +640,32 @@ class WebhookService {
    * POST a JSON body to a URL with a timeout.
    * @private
    */
-  static _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false) {
+  static _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false, webhookId = null) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const breakGlass = process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY === 'break-glass';
+
+    // Defense-in-depth: never skip TLS verification in production unless break-glass is set
+    if (tlsSkipVerify && isProduction && !breakGlass) {
+      tlsSkipVerify = false;
+      const AuditLogService = require('./AuditLogService');
+      AuditLogService.log({
+        category: AuditLogService.CATEGORY.CONFIGURATION,
+        action: AuditLogService.ACTION.WEBHOOK_TLS_SKIP_VERIFY_BLOCKED,
+        severity: AuditLogService.SEVERITY.HIGH,
+        result: 'FAILURE',
+        userId: webhookId ? String(webhookId) : 'unknown',
+        requestId: 'unknown',
+        ipAddress: 'unknown',
+        details: {
+          url,
+          webhookId,
+          context: 'delivery-layer override — tls_skip_verify flag ignored in production',
+        },
+        reason: 'tlsSkipVerify suppressed at delivery time in production (defense-in-depth)',
+      }).catch(() => {});
+      log.error('WEBHOOK_SERVICE', 'tls_skip_verify flag suppressed in production at delivery time', { webhookId, url });
+    }
+
     return new Promise((resolve, reject) => {
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
