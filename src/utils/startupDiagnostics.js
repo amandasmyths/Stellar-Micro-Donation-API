@@ -47,7 +47,16 @@ const getFeaturesInfo = () => {
     encryption: {
       enabled: !!config.encryption.key,
       requiredInProduction: config.encryption.requireInProduction
-    }
+    },
+    // Report presence only - never include raw values
+    kms: {
+      providerConfigured: !!process.env.KMS_PROVIDER,
+      keyConfigured: !!process.env.KMS_KEY_ID,
+    },
+    hsm: {
+      slotConfigured: !!process.env.HSM_SLOT_ID,
+      pinConfigured: !!process.env.HSM_PIN,
+    },
   };
 };
 

@@ -106,7 +106,7 @@ async function _awsDecryptDEK(encryptedDEK) {
 function getProvider() {
   const p = (process.env.KMS_PROVIDER || 'local').toLowerCase();
   if (!['local', 'aws'].includes(p)) {
-    log.warn('KMS', `Unknown KMS_PROVIDER "${p}", falling back to local`);
+    log.warn('KMS', 'Unknown KMS_PROVIDER value, falling back to local');
     return 'local';
   }
   return p;

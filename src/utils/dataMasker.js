@@ -75,6 +75,22 @@ const SENSITIVE_PATTERNS = [
   'iv',
   'authtag',
   'auth_tag',
+
+  // HSM (Hardware Security Module)
+  'hsm_pin',
+  'hsmpin',
+  'hsm_slot_id',
+  'hsmslotid',
+  'hsm_slot',
+  'hsmslot',
+
+  // KMS (Key Management Service)
+  'kms_key_id',
+  'kmskeyid',
+  'kms_key',
+  'kmskey',
+  'kms_provider',
+  'kmsprovider',
   
   // Session & Cookies
   'session',
