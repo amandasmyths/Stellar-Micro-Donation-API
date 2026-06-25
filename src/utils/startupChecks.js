@@ -35,9 +35,25 @@ function fail(name, detail) {
   console.error(`  ✖ ${name}${detail ? ': ' + detail : ''}`);
 }
 
-/** Check 1 — ENCRYPTION_KEY is set and exactly 64 hex characters (32 bytes) */
+/** Patterns that indicate a placeholder / example ENCRYPTION_KEY */
+const PLACEHOLDER_KEY_PATTERNS = [
+  /^<.*>$/,                      // literal angle-bracket placeholder from .env.example
+  /^dev_key_/i,                  // example prefix from .env.example
+  /^test_/i,                     // common test prefix
+  /^your[_-]/i,                  // "your_key_here" style docs
+  /^change[_-]me/i,              // "change-me" style docs
+  /^(?:0{32,}|1{32,}|a{32,})/i, // trivially weak repeated chars (e.g. 64 zeroes)
+  /^example/i,
+  /^placeholder/i,
+  /^todo/i,
+  /^fixme/i,
+];
+
+/** Check 1 — ENCRYPTION_KEY is set, non-placeholder, and has sufficient length */
 function checkEncryptionKey() {
   const key = process.env.ENCRYPTION_KEY;
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
   if (!key || !key.trim()) {
     fail('ENCRYPTION_KEY', 'required but not set — run `npm run generate-key`');
     return false;
@@ -48,19 +64,29 @@ function checkEncryptionKey() {
     fail('ENCRYPTION_KEY', `must be exactly 64 hex characters (32 bytes), got ${trimmedKey.length} — run `npm run generate-key``);
     return false;
   }
-  
-  if (!/^[0-9a-fA-F]{64}$/.test(trimmedKey)) {
-    fail('ENCRYPTION_KEY', 'must be 64 hexadecimal characters (0-9, a-f, A-F) — run `npm run generate-key``);
-    return false;
+
+  if (isProduction) {
+    const isPlaceholder = PLACEHOLDER_KEY_PATTERNS.some((re) => re.test(key));
+    if (isPlaceholder) {
+      fail(
+        'ENCRYPTION_KEY',
+        'placeholder or example key detected in production. ' +
+        'Generate a real key with `npm run generate-key` and supply it via a secrets manager. ' +
+        'See docs/SECRETS_LIFECYCLE.md for the recommended provisioning path.'
+      );
+      return false;
+    }
   }
-  
-  pass('ENCRYPTION_KEY', 'valid (64 hex chars)');
+
+  pass('ENCRYPTION_KEY', isProduction ? 'set and valid (production)' : 'set and valid');
   return true;
 }
 
-/** Check 2 — API_KEYS is configured */
+/** Check 2 — API_KEYS is configured and not using example values in production */
 function checkApiKeys() {
   const raw = process.env.API_KEYS;
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
   if (!raw || !raw.trim()) {
     fail('API_KEYS', 'not set — no requests will be authenticated');
     return false;
@@ -70,7 +96,21 @@ function checkApiKeys() {
     fail('API_KEYS', 'set but contains no valid keys');
     return false;
   }
-  if (process.env.NODE_ENV === 'production') {
+
+  if (isProduction) {
+    const exampleKeys = keys.filter((k) =>
+      PLACEHOLDER_KEY_PATTERNS.some((re) => re.test(k)) ||
+      /^dev_key_1234|^dev_key_abcdef/i.test(k)
+    );
+    if (exampleKeys.length > 0) {
+      fail(
+        'API_KEYS',
+        `${exampleKeys.length} example/placeholder key(s) detected in production. ` +
+        'Remove example keys (e.g. dev_key_1234567890) and provision real secrets. ' +
+        'See docs/SECRETS_LIFECYCLE.md.'
+      );
+      return false;
+    }
     warn(
       'API_KEYS (legacy)',
       `${keys.length} legacy key(s) detected in production. ` +
