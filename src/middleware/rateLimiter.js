@@ -214,15 +214,28 @@ const batchRateLimiter = rateLimit({
  */
 const bulkImportRateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 5,
   keyGenerator: (req) => req.apiKey?.id || req.ip,
   standardHeaders: true,
   legacyHeaders: true,
   validate: false,
+  skip: () => process.env.NODE_ENV === 'test',
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
       ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
       : 60;
+
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Bulk import rate limit exceeded',
+      details: { limit: 5, window: '60s', resetTime: req.rateLimit?.resetTime }
+    }).catch(err => log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err }));
 
     res.set('Retry-After', String(retryAfter));
     res.status(429).json({

@@ -1879,31 +1879,45 @@ router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustli
 const multer = require('multer');
 const { parse: parseCsvSync } = require('csv-parse/sync');
 const StellarSdkBulk = require('stellar-sdk');
+const { bulkImportRateLimiter } = require('../middleware/rateLimiter');
 
-const BULK_IMPORT_MAX_BYTES = parseInt(process.env.BULK_IMPORT_MAX_SIZE_BYTES || (1 * 1024 * 1024), 10);
-const bulkUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: BULK_IMPORT_MAX_BYTES },
-});
+const BULK_IMPORT_DEFAULT_MAX_BYTES = 1 * 1024 * 1024; // 1 MB
+const BULK_IMPORT_DEFAULT_MAX_ROWS = 1000;
+
+// Read per-request so tests can override via env var without module re-load
+function getBulkMaxBytes() {
+  return parseInt(process.env.BULK_IMPORT_MAX_SIZE_BYTES || BULK_IMPORT_DEFAULT_MAX_BYTES, 10);
+}
+function getBulkMaxRows() {
+  return parseInt(process.env.BULK_IMPORT_MAX_ROWS || BULK_IMPORT_DEFAULT_MAX_ROWS, 10);
+}
 
 /**
  * POST /wallets/bulk-import
  * Bulk import wallet addresses from a CSV file (multipart/form-data, field: "file").
  * CSV must have a header row: address,label,ownerName (label and ownerName are optional).
  * Each row is validated independently — invalid rows are counted as failed, duplicates as skipped.
- * Requires admin role.
+ * Requires admin role. Rate-limited to 5 requests per minute per API key.
  */
 router.post(
   '/bulk-import',
   requireAdmin(),
+  bulkImportRateLimiter,
   (req, res, next) => {
-    bulkUpload.single('file')(req, res, (err) => {
+    const maxBytes = getBulkMaxBytes();
+    const upload = multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: maxBytes },
+    });
+    upload.single('file')(req, res, (err) => {
       if (err && err.code === 'LIMIT_FILE_SIZE') {
+        const maxMB = (maxBytes / (1024 * 1024)).toFixed(2);
         return res.status(413).json({
           success: false,
           error: {
             code: 'FILE_TOO_LARGE',
-            message: `File exceeds the maximum allowed size of ${BULK_IMPORT_MAX_BYTES} bytes`,
+            message: `File exceeds the maximum allowed size of ${maxMB} MB (${maxBytes} bytes).`,
+            details: { max_size_bytes: maxBytes },
           },
         });
       }
@@ -1938,6 +1952,18 @@ router.post(
         return res.status(400).json({
           success: false,
           error: { code: 'EMPTY_FILE', message: 'CSV file contains no data rows' },
+        });
+      }
+
+      const maxRows = getBulkMaxRows();
+      if (rows.length > maxRows) {
+        return res.status(422).json({
+          success: false,
+          error: {
+            code: 'ROW_LIMIT_EXCEEDED',
+            message: `File contains ${rows.length} rows which exceeds the maximum of ${maxRows}.`,
+            details: { submitted: rows.length, limit: maxRows },
+          },
         });
       }
 
