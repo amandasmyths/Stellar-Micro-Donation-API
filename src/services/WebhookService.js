@@ -530,10 +530,11 @@ class WebhookService {
    */
   async _deliverWithRetry(webhook, event, payload, attempt) {
     const correlationHeaders = generateCorrelationHeaders();
+    const timestamp = new Date().toISOString();
     const body = JSON.stringify({
       event,
       data: payload,
-      timestamp: new Date().toISOString(),
+      timestamp,
       correlationContext: {
         correlationId: correlationHeaders['X-Correlation-ID'],
         traceId: correlationHeaders['X-Trace-ID'],
@@ -543,10 +544,10 @@ class WebhookService {
     const plaintextSecret = webhook.secret
       ? EncryptionService.decryptField(webhook.secret)
       : '';
-    const signature = WebhookService._sign(body, plaintextSecret);
+    const signature = WebhookService._sign(body, plaintextSecret, timestamp);
 
     try {
-      const result = await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders, !!webhook.tls_skip_verify);
+      const result = await WebhookService._httpPost(webhook.url, body, signature, timestamp, correlationHeaders, !!webhook.tls_skip_verify);
       
       // Log successful delivery
       const Database = require('../utils/database');
@@ -592,19 +593,22 @@ class WebhookService {
 
   /**
    * Compute HMAC-SHA256 signature for a payload.
+   * If a timestamp is provided, sign over timestamp + '.' + raw body.
    * @param {string} body
    * @param {string} secret
+   * @param {string} [timestamp]
    * @returns {string}
    */
-  static _sign(body, secret) {
-    return crypto.createHmac('sha256', secret).update(body).digest('hex');
+  static _sign(body, secret, timestamp) {
+    const payload = timestamp ? `${timestamp}.${body}` : body;
+    return crypto.createHmac('sha256', secret).update(payload).digest('hex');
   }
 
   /**
    * POST a JSON body to a URL with a timeout.
    * @private
    */
-  static _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false) {
+  static _httpPost(url, body, signature, timestamp, correlationHeaders = {}, tlsSkipVerify = false) {
     return new Promise((resolve, reject) => {
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
@@ -617,7 +621,10 @@ class WebhookService {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
           'User-Agent': 'Stella-Donation-API/1.0',
+          'X-Signature': `sha256=${signature}`,
+          'X-Signature-Timestamp': timestamp,
           'X-Webhook-Signature': `sha256=${signature}`,
+          'X-Webhook-Timestamp': timestamp,
           ...correlationHeaders,
         },
         // Explicitly enforce TLS verification regardless of NODE_TLS_REJECT_UNAUTHORIZED
