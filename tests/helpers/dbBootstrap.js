@@ -22,11 +22,21 @@ module.exports = async function createTestTables(Database) {
     apiKeyId TEXT,
     idempotencyKey TEXT NOT NULL,
     requestHash TEXT,
-    response TEXT,
+    response TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'completed',
     userId TEXT,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     expiresAt DATETIME,
     UNIQUE(apiKeyId, idempotencyKey)
+  )`);
+  await Database.run(`CREATE TABLE IF NOT EXISTS dedup_cache (
+    fingerprint TEXT NOT NULL,
+    apiKeyId TEXT,
+    status_code INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    PRIMARY KEY (fingerprint, COALESCE(apiKeyId, ''))
   )`);
   await Database.run(`CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

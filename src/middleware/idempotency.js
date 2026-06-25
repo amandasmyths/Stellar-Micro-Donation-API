@@ -55,8 +55,6 @@ async function requireIdempotency(req, res, next) {
 
     if (existing) {
       log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey, apiKeyId });
-
-      // Return cached response (idempotent behavior)
       return res.status(200).json({
         ...existing.response,
         _idempotent: true,
@@ -64,17 +62,53 @@ async function requireIdempotency(req, res, next) {
       });
     }
 
+    // Check if the same key is currently in-flight on another request
+    const inFlight = await IdempotencyService.isPending(idempotencyKey, apiKeyId);
+    if (inFlight) {
+      log.warn('IDEMPOTENCY', 'Concurrent request with same key is in-flight', { idempotencyKey, apiKeyId });
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'IDEMPOTENCY_CONFLICT',
+          message: 'A request with this idempotency key is already being processed. Retry after it completes.'
+        }
+      });
+    }
+
     const requestHash = IdempotencyService.generateRequestHash(req.body);
 
-    const duplicate = await IdempotencyService.findByHash(requestHash, idempotencyKey, apiKeyId);
+    // Atomically reserve the slot before executing the operation
+    const reserved = await IdempotencyService.reserve(idempotencyKey, requestHash, apiKeyId);
+    if (!reserved) {
+      // Another concurrent request beat us to the reservation
+      const racing = await IdempotencyService.isPending(idempotencyKey, apiKeyId);
+      if (racing) {
+        return res.status(409).json({
+          success: false,
+          error: {
+            code: 'IDEMPOTENCY_CONFLICT',
+            message: 'A request with this idempotency key is already being processed. Retry after it completes.'
+          }
+        });
+      }
+      // It completed while we were checking — return the completed response
+      const completed = await IdempotencyService.get(idempotencyKey, apiKeyId);
+      if (completed) {
+        return res.status(200).json({
+          ...completed.response,
+          _idempotent: true,
+          _originalTimestamp: completed.createdAt
+        });
+      }
+    }
 
+    const duplicate = await IdempotencyService.findByHash(requestHash, idempotencyKey, apiKeyId);
     if (duplicate) {
       log.warn('IDEMPOTENCY', 'Duplicate request payload detected with different key', {
         originalKey: duplicate.idempotencyKey,
         newKey: idempotencyKey,
         apiKeyId
       });
-
       req.idempotencyWarning = {
         message: 'Similar request detected with different idempotency key',
         originalKey: duplicate.idempotencyKey,
@@ -109,15 +143,14 @@ async function storeIdempotencyResponse(req, response) {
   }
 
   try {
-    await IdempotencyService.store(
+    await IdempotencyService.complete(
       req.idempotency.key,
-      req.idempotency.hash,
       response,
-      req.user?.id,
-      req.idempotency.apiKeyId
+      req.idempotency.apiKeyId,
+      req.user?.id
     );
   } catch (error) {
-    log.error('IDEMPOTENCY', 'Failed to store idempotent response', { error: error.message });
+    log.error('IDEMPOTENCY', 'Failed to complete idempotent response', { error: error.message });
   }
 }
 

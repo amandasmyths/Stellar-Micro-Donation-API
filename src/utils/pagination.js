@@ -362,13 +362,7 @@ function buildCursorWhereClause({
   const params = [];
   let clause = '';
 
-  // Apply snapshot filter first if provided
-  if (snapshotAt) {
-    clause += ` AND (${timestampColumn} < ?)`;
-    params.push(snapshotAt);
-  }
-
-  // Apply cursor filter
+  // Apply cursor filter first (snapshot appended after so snapshot param is last)
   if (cursor) {
     if (direction === 'prev') {
       clause += ` AND ((${timestampColumn} > ?) OR (${timestampColumn} = ? AND ${idColumn} > ?))`;
@@ -376,6 +370,12 @@ function buildCursorWhereClause({
       clause += ` AND ((${timestampColumn} < ?) OR (${timestampColumn} = ? AND ${idColumn} < ?))`;
     }
     params.push(cursor.timestamp, cursor.timestamp, cursor.id);
+  }
+
+  // Append snapshot filter after cursor so snapshot param is always last
+  if (snapshotAt) {
+    clause += ` AND ${timestampColumn} <= ?`;
+    params.push(snapshotAt);
   }
 
   return { clause, params };

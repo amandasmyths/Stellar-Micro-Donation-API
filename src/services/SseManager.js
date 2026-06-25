@@ -138,6 +138,27 @@ class SseManager {
   }
 
   /**
+   * Send a terminal shutdown event to all connected clients and close their streams.
+   * Called during graceful shutdown so clients know to reconnect after the server restarts
+   * rather than hanging on a dead connection.
+   *
+   * @param {string} [reason='server_shutdown']
+   * @returns {number} Number of connections terminated
+   */
+  terminateAll(reason = 'server_shutdown') {
+    const count = this._clients.size;
+    const payload = `data: ${JSON.stringify({ type: 'server_shutdown', reason })}\n\n`;
+    for (const client of this._clients.values()) {
+      try {
+        client.res.write(payload);
+        client.res.end();
+      } catch (_) { /* client already gone */ }
+    }
+    this._clients.clear();
+    return count;
+  }
+
+  /**
    * Return stats for all active SSE connections.
    */
   getStats() {

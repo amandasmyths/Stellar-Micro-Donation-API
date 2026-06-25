@@ -13,6 +13,7 @@ const requireApiKey = require('../middleware/apiKey');
 const WebhookService = require('../services/WebhookService');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { parseCursorPaginationQuery } = require('../utils/pagination');
 
 /**
  * Middleware that verifies the X-Webhook-Signature header on incoming webhook payloads.
@@ -86,12 +87,19 @@ router.post('/', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.webhook), asy
 
 /**
  * GET /webhooks
- * List all registered webhooks (secrets omitted).
+ * List registered webhooks (secrets omitted) with cursor pagination.
+ * Query params: limit (default 20, max 100), cursor, direction, snapshotAt
  */
 router.get('/', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
-    const webhooks = await WebhookService.list();
-    res.json({ success: true, data: webhooks, count: webhooks.length });
+    const pagination = parseCursorPaginationQuery(req.query);
+    const result = await WebhookService.list({
+      cursor: pagination.cursor,
+      direction: pagination.direction,
+      limit: pagination.limit,
+      snapshotAt: pagination.snapshotAt,
+    });
+    res.json({ success: true, data: result.items, count: result.items.length, pagination: result.meta });
   } catch (err) {
     next(err);
   }
@@ -113,29 +121,24 @@ router.delete('/:id', requireApiKey, asyncHandler(async (req, res, next) => {
 
 /**
  * GET /webhooks/:id/deliveries
- * Get delivery history for a specific webhook.
- * Query params: limit (default: 50), offset (default: 0)
+ * Get delivery history for a specific webhook with cursor pagination.
+ * Query params: limit (default 20, max 100), cursor, direction, snapshotAt
  */
 router.get('/:id/deliveries', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const webhookId = parseInt(req.params.id, 10);
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = parseInt(req.query.offset) || 0;
-
     if (isNaN(webhookId)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: { message: 'Invalid webhook ID' } 
-      });
+      return res.status(400).json({ success: false, error: { message: 'Invalid webhook ID' } });
     }
 
-    const deliveries = await WebhookService.WebhookService.getDeliveryHistory(webhookId, { limit, offset });
-    res.json({ 
-      success: true, 
-      data: deliveries, 
-      count: deliveries.length,
-      pagination: { limit, offset }
+    const pagination = parseCursorPaginationQuery(req.query);
+    const result = await WebhookService.WebhookService.getDeliveryHistory(webhookId, {
+      cursor: pagination.cursor,
+      direction: pagination.direction,
+      limit: pagination.limit,
+      snapshotAt: pagination.snapshotAt,
     });
+    res.json({ success: true, data: result.items, count: result.items.length, pagination: result.meta });
   } catch (err) {
     next(err);
   }

@@ -1,19 +1,20 @@
 /**
  * Request Deduplication Middleware
  *
- * RESPONSIBILITY: Content-based deduplication for requests without idempotency keys
- * OWNER: Backend Team
- * DEPENDENCIES: Cache utility, crypto
+ * RESPONSIBILITY: Content-based deduplication for requests without idempotency keys.
  *
- * Detects duplicate requests by fingerprinting method + path + body + API key,
- * caching successful responses for a configurable TTL (default 30s), and replaying
- * them for duplicate requests with an X-Deduplicated: true header.
+ * Primary path: state is persisted in the `dedup_cache` DB table so it survives
+ * process restarts and is visible across instances (migration 018).
+ *
+ * Fallback path: when the DB table does not yet exist (e.g. before the first
+ * migration run, or in unit-test setups that don't wire a full DB), an in-process
+ * Map is used instead. This keeps the middleware functional in all environments
+ * while the primary DB-backed path handles production correctness.
  */
 
 const crypto = require('crypto');
-const Cache = require('../utils/cache');
+const Database = require('../utils/database');
 const log = require('../utils/log');
-
 
 const DEDUP_WINDOW_MS = process.env.DEDUP_WINDOW_MS ? parseInt(process.env.DEDUP_WINDOW_MS, 10) : 30000;
 const DEFAULT_OPTIONS = {
@@ -21,9 +22,22 @@ const DEFAULT_OPTIONS = {
   methods: ['POST', 'PATCH'],
 };
 
+// In-memory fallback used when the dedup_cache table does not exist yet
+const _memCache = new Map();
+
+function _memGet(key) {
+  const item = _memCache.get(key);
+  if (!item) return null;
+  if (Date.now() > item.expiresAt) { _memCache.delete(key); return null; }
+  return item.value;
+}
+
+function _memSet(key, value, ttlMs) {
+  _memCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
 
 /**
- * Compute a SHA-256 fingerprint for a request using API key, endpoint, and sorted body JSON
+ * Compute a SHA-256 fingerprint for a request using API key, endpoint, and sorted body JSON.
  * @param {Object} req - Express request object
  * @returns {string} Hex digest fingerprint
  */
@@ -51,74 +65,102 @@ function sortObject(obj) {
 }
 
 /**
- * Create deduplication middleware with configurable options
+ * Create deduplication middleware with configurable options.
  * @param {Object} [options]
  * @param {number} [options.ttlMs=30000] - Cache TTL in milliseconds
- * @param {string[]} [options.methods=['POST','PUT','PATCH']] - HTTP methods to deduplicate
+ * @param {string[]} [options.methods=['POST','PATCH']] - HTTP methods to deduplicate
  * @returns {Function} Express middleware
  */
 function createDeduplicationMiddleware(options = {}) {
-
   const { ttlMs, methods } = { ...DEFAULT_OPTIONS, ...options };
   const methodSet = new Set(methods);
 
-  return function deduplicationMiddleware(req, res, next) {
-    // Only apply to POST and PATCH (not GET)
-    if (!methodSet.has(req.method)) {
-      return next();
-    }
+  return async function deduplicationMiddleware(req, res, next) {
+    if (!methodSet.has(req.method)) return next();
 
     // Skip if idempotency key is present — that system handles deduplication
     if (req.headers['idempotency-key'] || req.headers['x-idempotency-key']) {
       return next();
     }
 
-    try {
-      const fingerprint = computeFingerprint(req);
-      const cacheKey = `dedup:${fingerprint}`;
+    const fingerprint = computeFingerprint(req);
+    const apiKeyId = req.apiKey?.id || null;
+    const cacheKey = `dedup:${fingerprint}`;
 
-      // Check for cached response
-      const cached = Cache.get(cacheKey);
+    // ── Primary: DB-backed dedup ─────────────────────────────────────────────
+    let useMemFallback = false;
+
+    try {
+      const cached = await Database.get(
+        `SELECT status_code, body FROM dedup_cache
+         WHERE fingerprint = ?
+           AND (apiKeyId = ? OR (apiKeyId IS NULL AND ? IS NULL))
+           AND expires_at > datetime('now')`,
+        [fingerprint, apiKeyId, apiKeyId]
+      );
+
       if (cached) {
-        log.debug('DEDUPLICATION', 'Returning cached response for duplicate request', {
+        log.debug('DEDUPLICATION', 'Returning cached response (DB) for duplicate request', {
           fingerprint: fingerprint.substring(0, 16),
           method: req.method,
           path: req.path,
         });
         res.set('X-Deduplicated', 'true');
-        return res.status(cached.statusCode).json(cached.body);
+        return res.status(cached.status_code).json(JSON.parse(cached.body));
+      }
+    } catch (err) {
+      if (err.message && err.message.includes('no such table')) {
+        useMemFallback = true;
+      } else {
+        log.warn('DEDUPLICATION', 'DB cache read failed', { error: err.message });
+        useMemFallback = true;
+      }
+    }
+
+    // ── Fallback: in-memory dedup ────────────────────────────────────────────
+    if (useMemFallback) {
+      const memCached = _memGet(cacheKey);
+      if (memCached) {
+        log.debug('DEDUPLICATION', 'Returning cached response (memory) for duplicate request', {
+          fingerprint: fingerprint.substring(0, 16),
+        });
+        res.set('X-Deduplicated', 'true');
+        return res.status(memCached.statusCode).json(memCached.body);
       }
 
-      // Intercept res.json() to cache successful responses
       const originalJson = res.json.bind(res);
       res.json = function (body) {
-        res.json = originalJson; // restore to prevent double-interception
-        try {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            Cache.set(cacheKey, { statusCode: res.statusCode, body }, ttlMs);
-            log.debug('DEDUPLICATION', 'Cached response', {
-              fingerprint: fingerprint.substring(0, 16),
-              statusCode: res.statusCode,
-            });
-          }
-        } catch (err) {
-          log.warn('DEDUPLICATION', 'Failed to cache response', {
-            error: err.message,
-            fingerprint: fingerprint.substring(0, 16),
-          });
+        res.json = originalJson;
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          _memSet(cacheKey, { statusCode: res.statusCode, body }, ttlMs);
         }
         return originalJson(body);
       };
-
-      next();
-    } catch (err) {
-      log.error('DEDUPLICATION', 'Deduplication middleware error', {
-        error: err.message,
-        path: req.path,
-        method: req.method,
-      });
-      next();
+      return next();
     }
+
+    // ── Intercept res.json() to persist the response for subsequent duplicates ─
+    const originalJson = res.json.bind(res);
+    res.json = function (body) {
+      res.json = originalJson;
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+        Database.run(
+          `INSERT OR REPLACE INTO dedup_cache
+           (fingerprint, apiKeyId, status_code, body, expires_at)
+           VALUES (?, ?, ?, ?, ?)`,
+          [fingerprint, apiKeyId, res.statusCode, JSON.stringify(body), expiresAt]
+        ).catch(err => {
+          log.warn('DEDUPLICATION', 'Failed to persist response', {
+            error: err.message,
+            fingerprint: fingerprint.substring(0, 16),
+          });
+        });
+      }
+      return originalJson(body);
+    };
+
+    next();
   };
 }
 

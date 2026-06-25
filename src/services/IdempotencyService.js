@@ -28,7 +28,70 @@ class IdempotencyService {
   }
 
   /**
-   * Store idempotency record (Issue #891: scoped by apiKeyId)
+   * Atomically reserve an idempotency slot for the first request with this key.
+   * Uses INSERT OR IGNORE so exactly one concurrent request wins the slot;
+   * others must poll/retry or return 409.
+   *
+   * @param {string} idempotencyKey
+   * @param {string} requestHash
+   * @param {number|null} apiKeyId
+   * @returns {Promise<boolean>} true when this call won the reservation
+   */
+  async reserve(idempotencyKey, requestHash, apiKeyId = null) {
+    const expiresAt = new Date(Date.now() + this.DEFAULT_TTL).toISOString();
+    const result = await Database.run(
+      `INSERT OR IGNORE INTO idempotency_keys
+       (apiKeyId, idempotencyKey, requestHash, response, status, createdAt, expiresAt)
+       VALUES (?, ?, ?, '', 'pending', CURRENT_TIMESTAMP, ?)`,
+      [apiKeyId, idempotencyKey, requestHash, expiresAt]
+    );
+    return (result.changes || 0) === 1;
+  }
+
+  /**
+   * Check whether a key is currently in-flight (status = pending).
+   * @param {string} idempotencyKey
+   * @param {number|null} apiKeyId
+   * @returns {Promise<boolean>}
+   */
+  async isPending(idempotencyKey, apiKeyId = null) {
+    let query = `SELECT 1 FROM idempotency_keys
+                 WHERE idempotencyKey = ? AND status = 'pending'
+                 AND datetime(expiresAt) > datetime('now')`;
+    const params = [idempotencyKey];
+    if (apiKeyId !== null) {
+      query += ' AND apiKeyId = ?';
+      params.push(apiKeyId);
+    } else {
+      query += ' AND apiKeyId IS NULL';
+    }
+    const row = await Database.get(query, params);
+    return !!row;
+  }
+
+  /**
+   * Mark a reserved slot as completed and store the response.
+   * @param {string} idempotencyKey
+   * @param {Object} response
+   * @param {number|null} apiKeyId
+   * @param {number|null} userId
+   * @returns {Promise<void>}
+   */
+  async complete(idempotencyKey, response, apiKeyId = null, userId = null) {
+    await Database.run(
+      `UPDATE idempotency_keys
+       SET response = ?, status = 'completed', userId = ?
+       WHERE idempotencyKey = ?
+         AND (apiKeyId = ? OR (apiKeyId IS NULL AND ? IS NULL))`,
+      [JSON.stringify(response), userId, idempotencyKey, apiKeyId, apiKeyId]
+    );
+  }
+
+  /**
+   * Store idempotency record (Issue #891: scoped by apiKeyId).
+   * Prefer reserve() + complete() for atomic in-flight protection;
+   * this method is kept for backward compatibility with handlers that
+   * store the response after the operation.
    * @param {string} idempotencyKey - Client-provided unique key
    * @param {string} requestHash - Hash of request data
    * @param {Object} response - Response to cache
@@ -40,9 +103,9 @@ class IdempotencyService {
     const expiresAt = new Date(Date.now() + this.DEFAULT_TTL).toISOString();
 
     await Database.run(
-      `INSERT INTO idempotency_keys
-       (apiKeyId, idempotencyKey, requestHash, response, userId, createdAt, expiresAt)
-       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+      `INSERT OR REPLACE INTO idempotency_keys
+       (apiKeyId, idempotencyKey, requestHash, response, status, userId, createdAt, expiresAt)
+       VALUES (?, ?, ?, ?, 'completed', ?, CURRENT_TIMESTAMP, ?)`,
       [apiKeyId, idempotencyKey, requestHash, JSON.stringify(response), userId, expiresAt]
     );
   }
@@ -56,6 +119,7 @@ class IdempotencyService {
   async get(idempotencyKey, apiKeyId = null) {
     let query = `SELECT * FROM idempotency_keys
        WHERE idempotencyKey = ?
+       AND status = 'completed'
        AND datetime(expiresAt) > datetime('now')`;
     const params = [idempotencyKey];
 
@@ -92,6 +156,7 @@ class IdempotencyService {
   async findByHash(requestHash, excludeKey = null, apiKeyId = null) {
     let query = `SELECT * FROM idempotency_keys
                  WHERE requestHash = ?
+                 AND status = 'completed'
                  AND datetime(expiresAt) > datetime('now')`;
     const params = [requestHash];
 

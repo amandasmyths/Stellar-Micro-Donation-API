@@ -160,16 +160,44 @@ class WebhookService {
    * List all active webhooks (secrets omitted).
    * @returns {Promise<Object[]>}
    */
-  async list() {
+  async list({ cursor = null, direction = 'next', limit = 20, snapshotAt = null } = {}) {
     const Database = require('../utils/database');
-    const rows = await Database.all(`SELECT id, url, events, is_active, created_at FROM webhooks WHERE is_active = 1`);
-    return rows.map(r => ({
+    const { buildCursorWhereClause, buildCursorMeta } = require('../utils/pagination');
+
+    const { clause, params: cursorParams } = buildCursorWhereClause({
+      cursor,
+      direction,
+      timestampColumn: 'created_at',
+      idColumn: 'id',
+      snapshotAt,
+    });
+
+    const rows = await Database.all(
+      `SELECT id, url, events, is_active, created_at FROM webhooks WHERE is_active = 1${clause} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      [...cursorParams, limit + 1]
+    );
+
+    const hasMore = rows.length > limit;
+    const items = (hasMore ? rows.slice(0, limit) : rows).map(r => ({
       id: r.id,
       url: r.url,
       events: (() => { try { return JSON.parse(r.events); } catch { return r.events; } })(),
       isActive: Boolean(r.is_active),
       createdAt: r.created_at,
     }));
+
+    const meta = buildCursorMeta({
+      items,
+      limit,
+      direction,
+      hasMore,
+      hasCursor: !!cursor,
+      timestampField: 'createdAt',
+      idField: 'id',
+      snapshotAt,
+    });
+
+    return { items, meta };
   }
 
   /**
@@ -327,16 +355,25 @@ class WebhookService {
    * @param {number} [options.offset=0]
    * @returns {Promise<Object[]>}
    */
-  static async getDeliveryHistory(webhookId, { limit = 50, offset = 0 } = {}) {
+  static async getDeliveryHistory(webhookId, { cursor = null, direction = 'next', limit = 20, snapshotAt = null } = {}) {
     const Database = require('../utils/database');
+    const { buildCursorWhereClause, buildCursorMeta } = require('../utils/pagination');
+
+    const { clause, params: cursorParams } = buildCursorWhereClause({
+      cursor,
+      direction,
+      timestampColumn: 'delivered_at',
+      idColumn: 'id',
+      snapshotAt,
+    });
+
     const rows = await Database.all(
-      `SELECT * FROM webhook_delivery_history 
-       WHERE webhook_id = ? 
-       ORDER BY delivered_at DESC 
-       LIMIT ? OFFSET ?`,
-      [webhookId, limit, offset]
+      `SELECT * FROM webhook_delivery_history WHERE webhook_id = ?${clause} ORDER BY delivered_at DESC, id DESC LIMIT ?`,
+      [webhookId, ...cursorParams, limit + 1]
     );
-    return rows.map(r => ({
+
+    const hasMore = rows.length > limit;
+    const items = (hasMore ? rows.slice(0, limit) : rows).map(r => ({
       id: r.id,
       webhookId: r.webhook_id,
       event: r.event,
@@ -347,6 +384,19 @@ class WebhookService {
       errorMessage: r.error_message,
       deliveredAt: r.delivered_at,
     }));
+
+    const meta = buildCursorMeta({
+      items,
+      limit,
+      direction,
+      hasMore,
+      hasCursor: !!cursor,
+      timestampField: 'deliveredAt',
+      idField: 'id',
+      snapshotAt,
+    });
+
+    return { items, meta };
   }
 
   /**

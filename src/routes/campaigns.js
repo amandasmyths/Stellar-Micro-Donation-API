@@ -16,6 +16,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { validateFloat } = require('../utils/validationHelpers');
 const { cacheMiddleware } = require('../middleware/caching');
 const { STROOPS_PER_XLM } = require('../constants');
+const { parseCursorPaginationQuery, buildCursorWhereClause, buildCursorMeta } = require('../utils/pagination');
 
 const createCampaignSchema = validateSchema({
   body: {
@@ -89,26 +90,48 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
  */
 router.get('/', cacheMiddleware('campaign', 'public'), asyncHandler(async (req, res, next) => {
   try {
-    // First, mark any stale 'active' campaigns whose end_date has passed
     await Database.run(
       `UPDATE campaigns SET status = 'expired' WHERE status = 'active' AND end_date IS NOT NULL AND end_date < datetime('now')`
     );
 
+    const pagination = parseCursorPaginationQuery(req.query);
     const status = req.query.status || 'active';
-    let query = 'SELECT * FROM campaigns WHERE deleted_at IS NULL';
-    const params = [];
 
+    let baseWhere = 'deleted_at IS NULL';
     if (status === 'active') {
-      query += ` AND status != 'expired' AND (end_date IS NULL OR end_date > datetime('now'))`;
+      baseWhere += ` AND status != 'expired' AND (end_date IS NULL OR end_date > datetime('now'))`;
     } else if (status === 'expired') {
-      query += ` AND (status = 'expired' OR (end_date IS NOT NULL AND end_date < datetime('now')))`;
+      baseWhere += ` AND (status = 'expired' OR (end_date IS NOT NULL AND end_date < datetime('now')))`;
     }
-    // status=all: no additional filter
 
-    query += ' ORDER BY createdAt DESC LIMIT 100';
+    const { clause: cursorClause, params: cursorParams } = buildCursorWhereClause({
+      cursor: pagination.cursor,
+      direction: pagination.direction,
+      timestampColumn: 'createdAt',
+      idColumn: 'id',
+      snapshotAt: pagination.snapshotAt,
+    });
 
-    const campaigns = await Database.query(query, params);
-    res.status(200).json({ success: true, count: campaigns.length, data: campaigns });
+    const rows = await Database.query(
+      `SELECT * FROM campaigns WHERE ${baseWhere}${cursorClause} ORDER BY createdAt DESC, id DESC LIMIT ?`,
+      [...cursorParams, pagination.limit + 1]
+    );
+
+    const hasMore = rows.length > pagination.limit;
+    const data = hasMore ? rows.slice(0, pagination.limit) : rows;
+
+    const meta = buildCursorMeta({
+      items: data,
+      limit: pagination.limit,
+      direction: pagination.direction,
+      hasMore,
+      hasCursor: !!pagination.cursor,
+      timestampField: 'createdAt',
+      idField: 'id',
+      snapshotAt: pagination.snapshotAt,
+    });
+
+    res.status(200).json({ success: true, count: data.length, data, pagination: meta });
   } catch (error) {
     next(error);
   }
@@ -179,18 +202,39 @@ router.patch('/:id', requireApiKey, checkPermission(PERMISSIONS.ADMIN), updateCa
 router.get('/:id/donations', asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
-    
-    // Explicit SQLite mapping matching our initDB logic 
-    const transactions = await Database.query(
-      'SELECT id, amount, senderId, receiverId, timestamp, stellar_tx_id FROM transactions WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT 50',
-      [id]
+    const pagination = parseCursorPaginationQuery(req.query);
+
+    const { clause: cursorClause, params: cursorParams } = buildCursorWhereClause({
+      cursor: pagination.cursor,
+      direction: pagination.direction,
+      timestampColumn: 'timestamp',
+      idColumn: 'id',
+      snapshotAt: pagination.snapshotAt,
+    });
+
+    const rows = await Database.query(
+      `SELECT id, amount, senderId, receiverId, timestamp, stellar_tx_id FROM transactions WHERE campaign_id = ?${cursorClause} ORDER BY timestamp DESC, id DESC LIMIT ?`,
+      [id, ...cursorParams, pagination.limit + 1]
     );
 
-    const txData = transactions.map(tx => ({
+    const hasMore = rows.length > pagination.limit;
+    const data = (hasMore ? rows.slice(0, pagination.limit) : rows).map(tx => ({
       ...tx,
       amount: (tx.amount / STROOPS_PER_XLM).toFixed(7),
     }));
-    res.status(200).json({ success: true, count: txData.length, data: txData });
+
+    const meta = buildCursorMeta({
+      items: data,
+      limit: pagination.limit,
+      direction: pagination.direction,
+      hasMore,
+      hasCursor: !!pagination.cursor,
+      timestampField: 'timestamp',
+      idField: 'id',
+      snapshotAt: pagination.snapshotAt,
+    });
+
+    res.status(200).json({ success: true, count: data.length, data, pagination: meta });
   } catch (error) {
     next(error);
   }
