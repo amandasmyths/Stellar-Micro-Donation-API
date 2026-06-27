@@ -125,12 +125,6 @@ const auditLogMetrics = {
   totalFailures: 0,
 };
 
-/** In-memory buffer for pending audit log entries */
-const _pendingBuffer = [];
-const _BUFFER_FLUSH_THRESHOLD = 20;
-const BUFFER_FLUSH_INTERVAL_MS = 2000;
-let _autoFlushTimer = null;
-
 class AuditLogService {
   /**
    * Return a snapshot of audit log failure metrics.
@@ -388,79 +382,31 @@ class AuditLogService {
   }
 
   /**
-   * Write all buffered entries to the database in a single transaction.
-   * Has a 5-second timeout; on timeout the buffered entries are written to stderr and the
-   * buffer is cleared so that shutdown can proceed.
-   * Safe to call multiple times (idempotent).
+   * Flush pending audit entries to the database.
+   * All audit entries are written synchronously on each call to _log(), so this
+   * is a no-op kept for API compatibility with the shutdown sequence.
    * @returns {Promise<void>}
    */
   static async flush() {
-    if (_pendingBuffer.length === 0) return;
-
-    const entries = _pendingBuffer.splice(0, _pendingBuffer.length);
-
-    const writeEntries = async () => {
-      await db.run('BEGIN TRANSACTION');
-      try {
-        for (const entry of entries) {
-          await db.run(
-            `INSERT INTO audit_logs (
-              id, timestamp, category, action, severity, result,
-              userId, requestId, ipAddress, resource, reason,
-              details, integrityHash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              entry.id, entry.timestamp, entry.category, entry.action, entry.severity, entry.result,
-              entry.userId, entry.requestId, entry.ipAddress, entry.resource, entry.reason,
-              entry.details, entry.integrityHash
-            ]
-          );
-        }
-        await db.run('COMMIT');
-      } catch (err) {
-        await db.run('ROLLBACK').catch(() => {});
-        throw err;
-      }
-    };
-
-    const FLUSH_TIMEOUT_MS = 5000;
-    try {
-      await Promise.race([
-        writeEntries(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('flush timeout')), FLUSH_TIMEOUT_MS)
-        ),
-      ]);
-    } catch (err) {
-      process.stderr.write(
-        JSON.stringify({ event: 'audit_flush_failed', error: err.message, entries }) + '\n'
-      );
-    }
+    // All writes are direct (write-through). Nothing to flush.
   }
 
   /**
-   * Start the periodic auto-flush timer.
+   * Start periodic maintenance (cleans up any stale state).
+   * Kept for API compatibility with server bootstrap.
    * @returns {void}
    */
   static startAutoFlush() {
-    if (_autoFlushTimer) return;
-    _autoFlushTimer = setInterval(() => {
-      if (_pendingBuffer.length > 0) {
-        AuditLogService.flush().catch(() => {});
-      }
-    }, BUFFER_FLUSH_INTERVAL_MS);
-    if (_autoFlushTimer.unref) _autoFlushTimer.unref();
+    // No buffer — direct writes only. No timer needed.
   }
 
   /**
-   * Stop the periodic auto-flush timer.
+   * Stop periodic maintenance.
+   * Kept for API compatibility with server bootstrap.
    * @returns {void}
    */
   static stopAutoFlush() {
-    if (_autoFlushTimer) {
-      clearInterval(_autoFlushTimer);
-      _autoFlushTimer = null;
-    }
+    // No-op.
   }
 
   /**
