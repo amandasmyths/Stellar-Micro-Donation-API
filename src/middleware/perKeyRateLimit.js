@@ -45,6 +45,35 @@ const perKeyRateLimit = async (req, res, next) => {
   return next();
 };
 
+/**
+ * Synchronous per-key rate-limit check used by the legacy-API-key path in
+ * rbac.js, which consumes the result inline (no await). Delegates to the
+ * configured store and normalises the shape to include `limit`.
+ *
+ * The default in-memory store returns synchronously. If an async store (e.g.
+ * Redis) is configured, this synchronous entry point cannot block on it, so it
+ * fails open (allows the request) rather than throwing in the auth path — the
+ * async `perKeyRateLimit` middleware still enforces limits for DB-backed keys.
+ *
+ * @param {string} key
+ * @param {number} [limit] request ceiling; defaults to the module constant
+ * @param {number} [windowSeconds] window length in seconds; defaults to the module constant
+ * @returns {{ allowed: boolean, limit: number, remaining: number, resetAt: number }}
+ */
+function checkRateLimit(key, limit = DEFAULT_RATE_LIMIT, windowSeconds = DEFAULT_WINDOW_SECONDS) {
+  const result = getStore().incrementAndCheck(key, limit, windowSeconds);
+  if (result && typeof result.then === 'function') {
+    // Async store: cannot resolve synchronously here — fail open.
+    return { allowed: true, limit, remaining: limit, resetAt: Date.now() + windowSeconds * 1000 };
+  }
+  return {
+    allowed: result.allowed,
+    limit,
+    remaining: result.remaining,
+    resetAt: result.resetAt,
+  };
+}
+
 function clearStore() {
   const s = getStore();
   if (typeof s.clear === 'function') s.clear();
@@ -54,6 +83,7 @@ function _setStore(store) { _store = store; }
 
 module.exports = perKeyRateLimit;
 module.exports.buildRateLimitHeaders = buildRateLimitHeaders;
+module.exports.checkRateLimit = checkRateLimit;
 module.exports.clearStore = clearStore;
 module.exports._setStore = _setStore;
 module.exports.DEFAULT_RATE_LIMIT = DEFAULT_RATE_LIMIT;

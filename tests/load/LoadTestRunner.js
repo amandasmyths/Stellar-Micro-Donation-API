@@ -16,6 +16,9 @@ class LoadTestRunner {
    * @param {number} [options.concurrency=10] - Concurrent virtual users
    * @param {number} [options.iterations=50] - Total requests per scenario
    * @param {number} [options.thinkTimeMs=50] - Delay between requests per VU (ms)
+   * @param {number} [options.warmupIterations=0] - Discarded requests run before
+   *        measurement to absorb cold-start cost (JIT, lazy requires, first DB
+   *        connection) so the gate measures steady-state, not startup variance.
    */
   constructor(app, options = {}) {
     this.app = app;
@@ -23,6 +26,19 @@ class LoadTestRunner {
     this.iterations = options.iterations || 50;
     // Use explicit undefined check so thinkTimeMs: 0 is respected (0 is falsy)
     this.thinkTimeMs = options.thinkTimeMs !== undefined ? options.thinkTimeMs : 50;
+    this.warmupIterations = options.warmupIterations || 0;
+  }
+
+  /**
+   * Run a handful of discarded requests so the measured run reflects
+   * steady-state performance rather than one-off cold-start cost.
+   * @param {object} scenario
+   * @returns {Promise<void>}
+   */
+  async _warmup(scenario) {
+    for (let i = 0; i < this.warmupIterations; i++) {
+      await this._executeRequest(scenario.requestFn);
+    }
   }
 
   /**
@@ -69,6 +85,8 @@ class LoadTestRunner {
    * @returns {Promise<ScenarioResult>}
    */
   async runScenario(scenario) {
+    await this._warmup(scenario);
+
     const results = [];
     const startTime = Date.now();
 

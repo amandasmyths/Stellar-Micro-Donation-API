@@ -552,7 +552,7 @@ class WebhookService {
     for (const webhook of interested) {
       withAsyncContext('webhook_delivery', async () => {
         try {
-          await this._deliverWithRetry(webhook, event, payload, 0);
+          await WebhookService._deliverWithRetry(webhook, event, payload, 0);
         } catch (err) {
           await WebhookService.scheduleRetry({
             webhookId: webhook.id,
@@ -574,7 +574,7 @@ class WebhookService {
    * Attempt delivery with exponential backoff retry.
    * @private
    */
-  async _deliverWithRetry(webhook, event, payload, attempt) {
+  static async _deliverWithRetry(webhook, event, payload, attempt) {
     const correlationHeaders = generateCorrelationHeaders();
     const timestamp = new Date().toISOString();
     const body = JSON.stringify({
@@ -593,8 +593,14 @@ class WebhookService {
     const signature = WebhookService._sign(body, plaintextSecret, timestamp);
 
     try {
-      const result = await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders, !!webhook.tls_skip_verify, webhook.id);
-      
+      const result = await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders, !!webhook.tls_skip_verify, webhook.id, timestamp);
+
+      // A non-2xx response is a delivery failure: it must drive the retry /
+      // dead-letter path rather than being recorded as success.
+      if (!result.delivered) {
+        throw new Error(`Webhook endpoint responded with HTTP ${result.statusCode}`);
+      }
+
       // Log successful delivery
       const Database = require('../utils/database');
       await Database.run(
@@ -655,7 +661,7 @@ class WebhookService {
    * Validates the URL against SSRF rules before every request (DNS rebinding protection).
    * @private
    */
-  static _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false, webhookId = null) {
+  static _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false, webhookId = null, timestamp = null) {
     const isProduction = process.env.NODE_ENV === 'production';
     const breakGlass = process.env.WEBHOOK_ALLOW_TLS_SKIP_VERIFY === 'break-glass';
 

@@ -198,16 +198,16 @@ class StellarService extends StellarServiceInterface {
 
     // Retry policy — centralised and configurable (applies to all Horizon calls)
     this.retryPolicy = {
-      maxAttempts: config.maxRetryAttempts ?? parseInt(process.env.HORIZON_MAX_RETRY_ATTEMPTS, 10) || 3,
-      baseDelayMs:  config.retryBaseDelayMs  ?? parseInt(process.env.HORIZON_RETRY_BASE_DELAY_MS, 10) || 200,
-      maxDelayMs:   config.retryMaxDelayMs   ?? parseInt(process.env.HORIZON_RETRY_MAX_DELAY_MS, 10) || 2_000,
+      maxAttempts: config.maxRetryAttempts ?? (parseInt(process.env.HORIZON_MAX_RETRY_ATTEMPTS, 10) || 3),
+      baseDelayMs:  config.retryBaseDelayMs  ?? (parseInt(process.env.HORIZON_RETRY_BASE_DELAY_MS, 10) || 200),
+      maxDelayMs:   config.retryMaxDelayMs   ?? (parseInt(process.env.HORIZON_RETRY_MAX_DELAY_MS, 10) || 2_000),
     };
 
     // Circuit breaker — protects all Horizon API calls
     this.circuitBreaker = new CircuitBreaker({
-      failureThreshold: config.circuitBreakerThreshold ?? parseInt(process.env.HORIZON_CB_FAILURE_THRESHOLD, 10) || 5,
-      windowMs:  config.circuitBreakerWindowMs  ?? parseInt(process.env.HORIZON_CB_WINDOW_MS, 10) || 60_000,
-      cooldownMs: config.circuitBreakerCooldownMs ?? parseInt(process.env.HORIZON_CB_COOLDOWN_MS, 10) || 30_000,
+      failureThreshold: config.circuitBreakerThreshold ?? (parseInt(process.env.HORIZON_CB_FAILURE_THRESHOLD, 10) || 5),
+      windowMs:  config.circuitBreakerWindowMs  ?? (parseInt(process.env.HORIZON_CB_WINDOW_MS, 10) || 60_000),
+      cooldownMs: config.circuitBreakerCooldownMs ?? (parseInt(process.env.HORIZON_CB_COOLDOWN_MS, 10) || 30_000),
       name: 'horizon',
     });
   }
@@ -996,6 +996,7 @@ class StellarService extends StellarServiceInterface {
       if (timeoutTimer) {
         clearTimeout(timeoutTimer);
       }
+      // eslint-disable-next-line local/no-bare-timers -- per-stream idle timeout, cleared on every message and on stream close below
       timeoutTimer = setTimeout(() => {
         const elapsed = Date.now() - lastMessageTime;
         log.error('STELLAR_SERVICE', 'Transaction stream timeout', {

@@ -289,18 +289,14 @@ describe('PerformanceBaselines', () => {
       expect(BASELINES['donation-creation'].minThroughputRps).toBeGreaterThan(0);
     });
 
-    test('defines baseline for balance-queries', () => {
-      expect(BASELINES['balance-queries']).toBeDefined();
-      expect(BASELINES['balance-queries'].p95LatencyMs).toBeLessThan(BASELINES['donation-creation'].p95LatencyMs);
+    test('defines baseline for list-donations', () => {
+      expect(BASELINES['list-donations']).toBeDefined();
+      expect(BASELINES['list-donations'].p95LatencyMs).toBeLessThan(BASELINES['donation-creation'].p95LatencyMs);
     });
 
-    test('defines baseline for stats', () => {
-      expect(BASELINES['stats']).toBeDefined();
-    });
-
-    test('defines baseline for health-check', () => {
-      expect(BASELINES['health-check']).toBeDefined();
-      expect(BASELINES['health-check'].p95LatencyMs).toBeLessThan(BASELINES['donation-creation'].p95LatencyMs);
+    test('defines baseline for liveness', () => {
+      expect(BASELINES['liveness']).toBeDefined();
+      expect(BASELINES['liveness'].p95LatencyMs).toBeLessThan(BASELINES['donation-creation'].p95LatencyMs);
     });
 
     test('all baselines have required fields', () => {
@@ -605,12 +601,12 @@ describe('Integration: load test scenarios against test app', () => {
   test('report passes validation for well-behaved test app', async () => {
     const runner = new LoadTestRunner(testApp, { concurrency: 2, iterations: 6, thinkTimeMs: 0 });
     const report = await runner.runAll([
-      { name: 'health-check', requestFn: req => req.get('/health') },
+      { name: 'liveness', requestFn: req => req.get('/health') },
     ]);
     const jsonReport = generateJsonReport(report);
-    expect(jsonReport.scenarios[0].scenario).toBe('health-check');
+    expect(jsonReport.scenarios[0].scenario).toBe('liveness');
     // The test app is fast so no p95 violations expected
-    expect(report.scenarios[0].latency.p95).toBeLessThan(BASELINES['health-check'].p95LatencyMs);
+    expect(report.scenarios[0].latency.p95).toBeLessThan(BASELINES['liveness'].p95LatencyMs);
   }, 20000);
 });
 
@@ -620,14 +616,14 @@ describe('Integration: load test scenarios against test app', () => {
 
 describe('CI integration', () => {
   test('Artillery config files exist for all three scenarios', () => {
-    const artilleryDir = path.join(__dirname, 'load', 'artillery');
+    const artilleryDir = path.join(__dirname, '..', 'load', 'artillery');
     expect(fs.existsSync(path.join(artilleryDir, 'donation-creation.yml'))).toBe(true);
     expect(fs.existsSync(path.join(artilleryDir, 'balance-queries.yml'))).toBe(true);
     expect(fs.existsSync(path.join(artilleryDir, 'stats.yml'))).toBe(true);
   });
 
   test('run-load-tests.js entry point exists', () => {
-    expect(fs.existsSync(path.join(__dirname, 'load', 'run-load-tests.js'))).toBe(true);
+    expect(fs.existsSync(path.join(__dirname, '..', 'load', 'run-load-tests.js'))).toBe(true);
   });
 
   test('PerformanceBaselines.js exports BASELINES, validateAgainstBaseline, validateReport', () => {
@@ -648,7 +644,7 @@ describe('CI integration', () => {
   });
 
   test('GitHub Actions workflow file for load tests exists', () => {
-    const workflowPath = path.join(__dirname, '..', '.github', 'workflows', 'load-tests.yml');
+    const workflowPath = path.join(__dirname, '..', '..', '.github', 'workflows', 'load-tests.yml');
     expect(fs.existsSync(workflowPath)).toBe(true);
   });
 });
